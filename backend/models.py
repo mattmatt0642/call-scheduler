@@ -136,7 +136,7 @@ def slot_to_abs_minutes(slot: 'ShiftSlot') -> tuple:
     Convert a ShiftSlot to (abs_start, abs_end) in minutes w.r.t _EPOCH.
 
     The shift starts on slot.date at slot.start_time.
-    If slot.end_time < slot.strat_time (in minutes-since-midnight),
+    If slot.end_time < slot.start_time (in minutes-since-midnight),
     the shift crosses midnight: abs_end = next_day_offset + end_min.
     Returns: (abs_start, abs_end) both in interger minutes.
     """

@@ -43,19 +43,25 @@ def generate_slots(
 
         if hospital and not is_weekend:
             cap = _get_capacity(hospital,date, "call_day", custom_restrictions, 1)
+            if is_tuesday and is_restricted_tue:
+                cap = min(cap, hospital.restricted_tuesday_max)
             slots.append(ShiftSlot(
                 slot_id = f"{date}_{hospital.id}_call_day",
                 date = date, office_id = hospital.id, shift_type = "call_day",
                 start_time = "07:00", end_time = "19:00", max_doctors = cap,
-                call_balance_group = get_call_balance_group(date, "call_day")
+                call_balance_group = get_call_balance_group(date, "call_day"),
+                is_restricted_tuesday = (is_tuesday and is_restricted_tue)
             ))
             cap = _get_capacity(hospital, date, "call_night", custom_restrictions, 1)
+            if is_tuesday and is_restricted_tue:
+                cap = min(cap, hospital.restricted_tuesday_max)
             bg = get_call_balance_group(date, "call_night")
             slots.append(ShiftSlot(
                 slot_id = f"{date}_{hospital.id}_call_night",
                 date = date, office_id = hospital.id, shift_type = "call_night",
                 start_time = "19:00", end_time = "07:00", max_doctors = cap,
-                call_balance_group = bg
+                call_balance_group = bg,
+                is_restricted_tuesday = (is_tuesday and is_restricted_tue)
             ))
         
         if hospital and day['day_of_week'] == 5:
@@ -100,14 +106,11 @@ def generate_slots(
         if hospital:
             for stype in ["office_am", "office_pm"]:
                 cap = _get_capacity(hospital, date, stype, custom_restrictions, hospital.max_per_shift)
-                if is_tuesday and is_restricted_tue:
-                    cap = min(cap, hospital.restricted_tuesday_max)
                 slots.append(ShiftSlot(
                     slot_id = f"{date}_{hospital.id}_{stype}",
                     date = date, office_id = hospital.id, shift_type = stype,
                     start_time = SHIFT_TIMES[stype][0], end_time = SHIFT_TIMES[stype][1],
-                    max_doctors = cap,
-                    is_restricted_tuesday = (is_tuesday and is_restricted_tue)
+                    max_doctors = cap
                 ))
         
         if hospital and is_surgical_day:

@@ -49,9 +49,10 @@ for surg in surgical:
 # 2 non-hospital offices → 16 office_late slots
 assert len(late) == 16, f"16 late slots (8 Mon/Thu days * 2 offices), got {len(late)}"
 
-# Restricted Tuesdays: Sep 1, 15, 29 → 3 days × 2 hospital slots (AM+PM) = 6
-assert len(restricted) == 6, f"6 restricted Tuesday hospital slots, got {len(restricted)}"
+# Restricted Tuesdays: Sep 1, 15, 29 → 3 days × 2 call slots (call_day+call_night) = 6
+assert len(restricted) == 6, f"6 restricted Tuesday hospital call slots, got {len(restricted)}"
 for s in restricted:
+    assert s.shift_type in ("call_day", "call_night"), f"Restricted should be call shift, got {s.shift_type}"
     assert s.max_doctors == 1, f"Restricted slot {s.slot_id} should have cap=1"
 
 # All slot IDs must be unique

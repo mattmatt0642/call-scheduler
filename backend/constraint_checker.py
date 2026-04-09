@@ -228,8 +228,8 @@ def check_h7_surgical_pairing(
 
 def check_h8_post_call_location(
     doctors: List[DoctorProfile],
-    slots: List[Assignment],
-    assignments,
+    slots: List[ShiftSlot],
+    assignments: List[Assignment],
     slot_map: Dict[str, ShiftSlot],
 ) -> List[ConstraintViolation]:
     """
