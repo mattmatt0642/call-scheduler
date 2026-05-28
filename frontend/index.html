@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Call Scheduler</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="root">
+
+<!-- Header -->
+<header class="app-header">
+<h1>Call<span>Scheduler</span></h1>
+<nav class="tab-nav">
+<button class="tab-btn active" data-tab="setup">Setup</button>
+<button class="tab-btn" data-tab="doctors">Doctors</button>
+<button class="tab-btn" data-tab="generate">Generate</button>
+<button class="tab-btn" data-tab="schedule">Schedule</button>
+<button class="tab-btn" data-tab="balance">Balance</button>
+</nav>
+</header>
+
+<!-- Main -->
+<main>
+
+<!-- ─── SETUP / WIZARD ─────────────────────────────────── -->
+<section id="tab-setup" class="tab-pane active">
+<div class="page">
+
+<!-- Step indicator -->
+<div class="step-bar" id="wizard-steps">
+<div class="step-item">
+<div class="step-dot active" data-step="1">1</div>
+<div class="step-label">Schedule</div>
+</div>
+<div class="step-line"></div>
+<div class="step-item">
+<div class="step-dot" data-step="2">2</div>
+<div class="step-label">Doctors</div>
+</div>
+<div class="step-line"></div>
+<div class="step-item">
+<div class="step-dot" data-step="3">3</div>
+<div class="step-label">Offices</div>
+</div>
+<div class="step-line"></div>
+<div class="step-item">
+<div class="step-dot" data-step="4">4</div>
+<div class="step-label">Generate</div>
+</div>
+</div>
+
+<!-- Step 1: Practice -->
+<div id="wstep-1" class="wizard-step">
+<div class="step-heading">Schedule Settings</div>
+  <div class="step-subheading">Choose the month for the schedule.</div>
+
+<div class="card">
+<div class="gen-card-body">
+<div class="field">
+<label>Year</label>
+<input type="number" id="wiz-year" value="" min="2020" max="2100" />
+</div>
+<div class="field">
+<label>Month</label>
+<select id="wiz-month">
+<option value="0">January</option><option value="1">February</option>
+<option value="2">March</option><option value="3">April</option>
+<option value="4">May</option><option value="5">June</option>
+<option value="6">July</option><option value="7">August</option>
+<option value="8" selected>September</option><option value="9">October</option>
+<option value="10">November</option><option value="11">December</option>
+ </div>
+ </div>
+ </div>
+
+<div class="wizard-nav">
+<div class="spacer"></div>
+<button class="btn btn-primary" onclick="wizardNext()">Next: Doctors &rarr;</button>
+</div>
+</div>
+
+<!-- Step 2: Doctors -->
+<div id="wstep-2" class="wizard-step hidden">
+<div class="step-heading">Your Doctors</div>
+<div class="step-subheading">Add all doctors who take call. You can edit details later.</div>
+
+<div class="card" id="wiz-doctors-list"></div>
+
+<button class="btn-add" onclick="addDoctor()">
+<span class="plus-icon">+</span> Add Doctor
+</button>
+
+<div class="csv-row">
+<div class="flex-row" style="gap:0.45rem;">
+<button class="btn btn-sm btn-ghost" onclick="handleExportDoctors()">&darr; Template CSV</button>
+<label class="btn btn-sm btn-ghost file-btn">&uarr; Import CSV
+<input type="file" id="import-doctors-file" accept=".csv" hidden />
+</label>
+</div>
+</div>
+
+<div class="wizard-nav">
+<button class="btn btn-ghost" onclick="wizardPrev()">&larr; Back</button>
+<button class="btn btn-primary" onclick="wizardNext()">Next: Offices &rarr;</button>
+</div>
+</div>
+
+<!-- Step 3: Offices -->
+<div id="wstep-3" class="wizard-step hidden">
+<div class="step-heading">Your Offices</div>
+<div class="step-subheading">Add locations. Mark the hospital so call shifts are placed correctly.</div>
+
+<div class="card" id="wiz-offices-list"></div>
+
+<button class="btn-add" onclick="addOffice()">
+<span class="plus-icon">+</span> Add Office
+</button>
+
+<div class="csv-row">
+<div class="flex-row" style="gap:0.45rem;">
+<button class="btn btn-sm btn-ghost" onclick="handleExportOffices()">&darr; Template CSV</button>
+<label class="btn btn-sm btn-ghost file-btn">&uarr; Import CSV
+<input type="file" id="import-offices-file" accept=".csv" hidden />
+</label>
+</div>
+</div>
+
+<div class="wizard-nav">
+<button class="btn btn-ghost" onclick="wizardPrev()">&larr; Back</button>
+<button class="btn btn-primary" onclick="wizardNext()">Next: Availability &rarr;</button>
+</div>
+</div>
+
+<!-- Step 4: Restrictions & Generate -->
+<div id="wstep-4" class="wizard-step hidden">
+<div class="step-heading">Availability &amp; Generate</div>
+<div class="step-subheading">Mark time off for each doctor, then generate the schedule.</div>
+
+<div class="gen-layout">
+<div class="gen-left">
+<!-- Time off calendar -->
+<div class="gen-card">
+<div class="gen-card-header">Time Off</div>
+<div class="gen-card-body">
+<div class="field" style="margin-bottom:0.6rem;">
+<label>Doctor</label>
+<select id="blackout-doctor-select"></select>
+</div>
+<div id="blackout-calendar" class="blackout-calendar-container"></div>
+<div id="blackout-portal"></div>
+<div class="blackout-legend">
+<span><span class="legend-dot legend-dot-all"></span> All Day</span>
+<span><span class="legend-dot legend-dot-am"></span> Morning</span>
+<span><span class="legend-dot legend-dot-pm"></span> Afternoon</span>
+<span><span class="legend-dot legend-dot-custom"></span> Custom</span>
+</div>
+<div id="blackout-entries"></div>
+</div>
+</div>
+</div>
+
+<div class="gen-right">
+<!-- Generate -->
+<div class="gen-card">
+<div class="gen-card-header">Generate Schedule</div>
+<div class="gen-card-body">
+<div id="gen-status" class="gen-status-area"></div>
+<button id="btn-generate" class="btn-generate" onclick="handleGenerate()">
+<span class="btn-icon">&#9654;</span> Generate Schedule
+</button>
+<div id="conflict-panel" class="conflict-panel hidden">
+<h4>&#9888; Scheduling Issues</h4>
+<ul id="conflict-list" class="conflict-list"></ul>
+</div>
+</div>
+</div>
+
+<!-- Summary -->
+<div class="gen-card">
+<div class="gen-card-header">Summary</div>
+<div class="gen-card-body" id="wiz-summary">
+<div class="text-muted text-sm">Add doctors and offices to see a summary.</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="wizard-nav">
+<button class="btn btn-ghost" onclick="wizardPrev()">&larr; Back</button>
+<button class="btn btn-primary" onclick="wizardNext()">View Schedule &rarr;</button>
+</div>
+</div>
+
+</div><!-- /.page -->
+</section>
+
+<!-- ─── DOCTORS (full config) ──────────────────────────── -->
+<section id="tab-doctors" class="tab-pane">
+<div class="page">
+      <div class="step-heading">Doctors</div>
+      <div class="step-subheading">Edit each doctor's profile — days off, call preferences, and limits are right here.</div>
+
+<div id="doctor-accordion" class="doc-accordion"></div>
+
+<button class="btn-add" style="margin-top:0.75rem" onclick="addDoctor()">
+<span class="plus-icon">+</span> Add Doctor
+</button>
+</div>
+</section>
+
+<!-- ─── GENERATE ────────────────────────────────────────── -->
+<section id="tab-generate" class="tab-pane">
+<div class="page">
+<div class="step-heading">Generate Schedule</div>
+<div class="step-subheading">Select days off and generate a new schedule.</div>
+
+<div class="gen-layout">
+<div class="gen-left">
+<div class="gen-card">
+<div class="gen-card-header">Month</div>
+<div class="gen-card-body">
+<div class="field">
+<label>Year</label>
+<input type="number" id="gen-year" value="" min="2020" max="2100" />
+</div>
+<div class="field">
+<label>Month</label>
+<select id="gen-month">
+<option value="0">January</option><option value="1">February</option>
+<option value="2">March</option><option value="3">April</option>
+<option value="4">May</option><option value="5">June</option>
+<option value="6">July</option><option value="7">August</option>
+<option value="8" selected>September</option><option value="9">October</option>
+<option value="10">November</option><option value="11">December</option>
+ </select>
+ </div>
+ </div>
+ </div>
+
+<div class="gen-card">
+<div class="gen-card-header">Time Off</div>
+<div class="gen-card-body">
+<div class="field" style="margin-bottom:0.6rem;">
+<label>Doctor</label>
+<select id="blackout-doctor-select-gen"></select>
+</div>
+<div id="blackout-calendar-gen" class="blackout-calendar-container"></div>
+<div id="blackout-portal-gen"></div>
+<div class="blackout-legend">
+<span><span class="legend-dot legend-dot-all"></span> All Day</span>
+<span><span class="legend-dot legend-dot-am"></span> Morning</span>
+<span><span class="legend-dot legend-dot-pm"></span> Afternoon</span>
+<span><span class="legend-dot legend-dot-custom"></span> Custom</span>
+</div>
+<div id="blackout-entries-gen"></div>
+</div>
+</div>
+</div>
+
+<div class="gen-right">
+<div class="gen-card">
+<div class="gen-card-header">Generate Schedule</div>
+<div class="gen-card-body">
+<div id="gen-status-2" class="gen-status-area"></div>
+<button id="btn-generate-2" class="btn-generate" onclick="handleGenerateGenTab()">
+<span class="btn-icon">&#9654;</span> Generate Schedule
+</button>
+<div id="conflict-panel-2" class="conflict-panel hidden">
+<h4>&#9888; Scheduling Issues</h4>
+<ul id="conflict-list-2" class="conflict-list"></ul>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- ─── SCHEDULE ────────────────────────────────────────── -->
+<section id="tab-schedule" class="tab-pane">
+<div class="page">
+  <div class="sched-header">
+    <div>
+      <div class="sched-title" id="sched-month-label">September 2026</div>
+    </div>
+    <div class="flex-row">
+      <div class="month-nav">
+        <button class="month-nav-btn" onclick="changeScheduleMonth(-1)">&lsaquo;</button>
+        <span class="month-nav-label" id="sched-nav-label">Sep 2026</span>
+        <button class="month-nav-btn" onclick="changeScheduleMonth(1)">&rsaquo;</button>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="handleExportSchedule()">&darr; CSV</button>
+      <button class="btn btn-sm btn-danger" onclick="handleClearMonth()">Clear</button>
+    </div>
+  </div>
+
+<div class="sched-stats" id="sched-stats">
+<div class="stat-chip">
+<span class="stat-label">Status</span>
+<span class="stat-val" id="sched-solver-status">&mdash;</span>
+</div>
+<div class="stat-chip">
+<span class="stat-label">Call Fairness</span>
+<span class="stat-val" id="sched-call-gini">&mdash;</span>
+</div>
+<div class="stat-chip">
+<span class="stat-label">Session Fairness</span>
+<span class="stat-val" id="sched-session-gini">&mdash;</span>
+</div>
+</div>
+
+<div id="calendar-container"></div>
+</div>
+</section>
+
+<!-- ─── BALANCE ────────────────────────────────────────── -->
+<section id="tab-balance" class="tab-pane">
+<div class="page">
+<div class="sched-header">
+<div>
+<div class="sched-title">Cumulative Balance</div>
+<div class="sched-subtitle">Call assignments and sessions across all generated months</div>
+</div>
+<div class="flex-row">
+<button class="btn btn-sm btn-ghost" id="btn-export-balance">&darr; Export</button>
+<label class="btn btn-sm btn-ghost file-btn">&uarr; Import
+<input type="file" id="import-balance-file" accept=".csv" hidden />
+</label>
+</div>
+</div>
+<div id="balance-table-wrapper"></div>
+</div>
+</section>
+
+</main>
+
+<footer class="app-footer">
+<span id="api-status">Checking API&hellip;</span>
+<span>&middot;</span>
+<span id="data-status"></span>
+</footer>
+
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/api.js"></script>
+<script src="js/calendar.js"></script>
+<script src="js/doctor_config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

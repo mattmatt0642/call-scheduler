@@ -14,9 +14,9 @@ inp    = ScheduleInput(year=2026, month=8, doctors=[], offices=offices,
 # Empty schedule: every call slot is an H3 violation
 violations = validate_schedule(inp, slots, [])
 h3 = [v for v in violations if v.constraint_id == "H3"]
-# 22 call_day + 22 call_night + 4 call_weekend = 48 slots
-assert len(h3) == 48, f"Expected 48 H3 violations on empty schedule, got {len(h3)}"
-print(f"H3 check: {len(h3)} violations (expected 48) — PASSED")
+# 22 call_day + 22 call_night + 4 call_weekend + 4 call_weekend_sun = 52 slots
+assert len(h3) == 52, f"Expected 52 H3 violations on empty schedule, got {len(h3)}"
+print(f"H3 check: {len(h3)} violations (expected 52) — PASSED")
 
 # H6: Friday night call + Saturday 08:00 office should NOT be a violation
 from models import Assignment, ShiftSlot
@@ -62,12 +62,13 @@ assert len(h6_early) > 0, \
     "Friday night + Saturday 06:00 SHOULD be an H6 violation"
 print("H6 cross-day overlap detected: PASSED")
 
-# H6: Friday night + Saturday weekend block SHOULD be a violation
+# H6: Friday night + Saturday weekend block — call_weekend starts 07:00,
+# fri_night ends 07:00, so they touch but do NOT overlap => no H6 violation
 sat_block_id = "2026-09-05_hosp_call_weekend"
 a4 = Assignment(doctor_id="d1", slot_id=sat_block_id)
 h6_wknd = check_h6_no_overlap([doc], [a1, a4], test_map)
-assert len(h6_wknd) > 0, \
-    "Friday night + Saturday block (00:00-23:59) SHOULD be an H6 violation"
-print("H6 Friday night vs weekend block conflict detected: PASSED")
+assert len(h6_wknd) == 0, \
+    "Friday night + Saturday block (07:00-23:59) should NOT be an H6 violation (touching at 07:00)"
+print("H6 Friday night vs weekend block no conflict: PASSED")
 
 print("\nAll Checkpoint 3 tests passed.")

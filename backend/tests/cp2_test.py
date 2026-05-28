@@ -31,9 +31,12 @@ assert len(wknd_sat)   ==  4, f"4 Saturday blocks, got {len(wknd_sat)}"
 assert len(wknd_sun)   ==  4, f"4 Sunday blocks paired with Saturday, got {len(wknd_sun)}"
 
 # Weekend slot time representation
-for s in wknd_sat + wknd_sun:
+for s in wknd_sun:
     assert s.start_time == "00:00", f"{s.slot_id} must start at 00:00"
-    assert s.end_time   == "23:59", f"{s.slot_id} must end at 23:59"
+    assert s.end_time == "23:59", f"{s.slot_id} must end at 23:59"
+for s in wknd_sat:
+    assert s.start_time == "07:00", f"{s.slot_id} must start at 07:00"
+    assert s.end_time == "23:59", f"{s.slot_id} must end at 23:59"
 
 # Sep 2026 Tue/Wed/Thu days: 1,2,3,8,9,10,15,16,17,22,23,24,29,30 = 14 days
 assert len(surgical) == 14, f"14 surgical AM slots (Tue+Wed+Thu), got {len(surgical)}"
@@ -49,11 +52,14 @@ for surg in surgical:
 # 2 non-hospital offices → 16 office_late slots
 assert len(late) == 16, f"16 late slots (8 Mon/Thu days * 2 offices), got {len(late)}"
 
-# Restricted Tuesdays: Sep 1, 15, 29 → 3 days × 2 call slots (call_day+call_night) = 6
-assert len(restricted) == 6, f"6 restricted Tuesday hospital call slots, got {len(restricted)}"
+# Restricted Tuesdays: Sep 1, 15, 29 → 3 days × 2 hospital office slots (office_am+office_pm) = 6
+assert len(restricted) == 6, f"6 restricted Tuesday hospital office slots, got {len(restricted)}"
 for s in restricted:
-    assert s.shift_type in ("call_day", "call_night"), f"Restricted should be call shift, got {s.shift_type}"
-    assert s.max_doctors == 1, f"Restricted slot {s.slot_id} should have cap=1"
+	assert s.shift_type in ("office_am", "office_pm"), f"Restricted should be hospital office shift, got {s.shift_type}"
+	assert s.max_doctors == 1, f"Restricted slot {s.slot_id} should have cap=1"
+# No call slots should have is_restricted_tuesday
+restricted_call = [s for s in slots if s.is_restricted_tuesday and s.shift_type in ("call_day", "call_night")]
+assert len(restricted_call) == 0, f"0 call slots should be restricted, got {len(restricted_call)}"
 
 # All slot IDs must be unique
 ids = [s.slot_id for s in slots]

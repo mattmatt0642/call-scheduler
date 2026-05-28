@@ -44,21 +44,21 @@ class Office:
 class DoctorProfile:
     id: str
     name: str
-    allowed_offices: Optional[List[str]]
-    office_preferences: List[str]
-    required_sessions_per_week: int
-    hospital_call_eligible: bool
-    surgical_assist_eligible: bool
-    max_weekday_day_calls: int
-    max_weekday_night_calls: int
-    max_friday_night_calls: int
-    max_weekend_blocks: int
-    preferred_call_days: List[int]
-    post_call_preference: str
-    call_shift_preference: str
-    day_night_preference: str
-    am_pm_preference: str
-    standing_days_off:List[int]
+    allowed_offices: Optional[List[str]] = None
+    office_preferences: List[str] = field(default_factory=list)
+    required_sessions_per_week: int = 5
+    hospital_call_eligible: bool = True
+    surgical_assist_eligible: bool = True
+    max_weekday_day_calls: int = 5
+    max_weekday_night_calls: int = 5
+    max_friday_night_calls: int = 2
+    max_weekend_blocks: int = 2
+    preferred_call_days: List[int] = field(default_factory=list)
+    post_call_preference: str = "no_preference"
+    call_shift_preference: str = "no_preference"
+    day_night_preference: str = "balanced"
+    am_pm_preference: str = "balanced"
+    standing_days_off: List[int] = field(default_factory=list)
     fixed_recurring: List[RecurringSlot] = field(default_factory=list)
     one_time_overrides: List[OneTimeOverride] = field(default_factory=list)
 
@@ -111,11 +111,11 @@ class ScheduleInput:
     doctors: List[DoctorProfile]
     offices: List[Office]
     global_office_ranking: List[str]
-    day_off_dates: List[str]
+    day_off_dates: object  # List[str] (flat) or Dict[str, List[str]] (per-doctor)
     custom_restrictions: List[CustomRestriction]
     locked_assignments: List[Assignment]
     historical_balance: Dict[str, Dict]
-    solver_time_limit_seconds: int = 120
+    solver_time_limit_seconds: int = 900
 
 @dataclass
 class ScheduleResult:
@@ -183,6 +183,7 @@ def get_days_in_month(year: int, month: int) -> List[Dict]:
         week_num:    int  — 0-indexed week within the month
     """
     start_day, total_days = calendar.monthrange(year, month+1)
+    first_dow = date(year, month+1, 1).weekday()
     days_in_month = []
     for day in range(1, total_days + 1):
         day_of_month = {}
@@ -195,7 +196,7 @@ def get_days_in_month(year: int, month: int) -> List[Dict]:
         day_of_month['is_tuesday'] = True if d.weekday() == 1 else False
         day_of_month['is_thursday'] = True if d.weekday() == 3 else False
         day_of_month['is_friday'] = True if d.weekday() == 4 else False
-        day_of_month['week_num'] = (day - 1) // 7
+        day_of_month['week_num'] = (day + first_dow - 1) // 7
         days_in_month.append(day_of_month)
     return days_in_month
 

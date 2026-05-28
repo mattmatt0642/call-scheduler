@@ -1,3 +1,7 @@
-backend/venv/
 __pycache__/
 *.pyc
+backend/info/
+backend/.venv
+.secret
+*.db
+handoff/
