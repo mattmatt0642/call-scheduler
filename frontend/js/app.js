@@ -10,25 +10,30 @@ let wizardStep = 1;
 // ── Wizard ──────────────────────────────────────────────────────────────────
 
 function showWizardStep(step) {
-	wizardStep = step;
-	document.querySelectorAll('.wizard-step').forEach(ws => ws.classList.add('hidden'));
-	const target = document.getElementById('wstep-' + step);
-	if (target) target.classList.remove('hidden');
+    wizardStep = step;
+    // Ensure we're on the setup tab first
+    const setupPane = document.getElementById('tab-setup');
+    if (setupPane && !setupPane.classList.contains('active')) {
+        switchTab('setup');
+    }
+    document.querySelectorAll('.wizard-step').forEach(ws => ws.classList.add('hidden'));
+    const target = document.getElementById('wstep-' + step);
+    if (target) target.classList.remove('hidden');
 
-  document.querySelectorAll('.step-dot').forEach(dot => {
-    const s = parseInt(dot.dataset.step);
-    dot.classList.remove('active', 'done');
-    dot.textContent = s;
-    if (s === step) dot.classList.add('active');
-    else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
-  });
+    document.querySelectorAll('.step-dot').forEach(dot => {
+        const s = parseInt(dot.dataset.step);
+        dot.classList.remove('active', 'done');
+        dot.textContent = s;
+        if (s === step) dot.classList.add('active');
+        else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
+    });
 
-	if (step === 2) renderWizardDoctors();
-	if (step === 3) renderWizardOffices();
-	if (step === 4) {
-		syncWizardToGenTab();
-		updateWizardSummary();
-	}
+    if (step === 2) renderWizardDoctors();
+    if (step === 3) renderWizardOffices();
+    if (step === 4) {
+        syncWizardToGenTab();
+        updateWizardSummary();
+    }
 }
 
 function wizardNext() {
@@ -250,9 +255,9 @@ function validateCallEligibility() {
 }
 
 async function handleGenerate() {
-  const year = parseInt(document.getElementById('wiz-year')?.value || 2026);
-  const month = parseInt(document.getElementById('wiz-month')?.value || 8);
-  const timeout = 30;
+    const year = parseInt(document.getElementById('wiz-year')?.value || 2026);
+    const month = parseInt(document.getElementById('wiz-month')?.value || 8);
+    const timeout = STATE.settings.solverTimeLimitSeconds || 900;
   const statusEl = document.getElementById('gen-status');
   const btn = document.getElementById('btn-generate');
 
@@ -322,9 +327,9 @@ async function handleGenerate() {
 // ── Generate (dedicated tab) ─────────────────────────────────────────────────
 
 async function handleGenerateGenTab() {
-  const year = parseInt(document.getElementById('gen-year')?.value || 2026);
-  const month = parseInt(document.getElementById('gen-month')?.value || 8);
-  const timeout = 30;
+    const year = parseInt(document.getElementById('gen-year')?.value || 2026);
+    const month = parseInt(document.getElementById('gen-month')?.value || 8);
+    const timeout = STATE.settings.solverTimeLimitSeconds || 900;
   const statusEl = document.getElementById('gen-status-2');
   const btn = document.getElementById('btn-generate-2');
 
@@ -466,55 +471,94 @@ function updateScheduleControls() {
 // ── Balance table ──────────────────────────────────────────────────────────
 
 function updateBalanceTable() {
-	const wrapper = document.getElementById('balance-table-wrapper');
-	if (!wrapper) return;
+    const wrapper = document.getElementById('balance-table-wrapper');
+    const monthsWrapper = document.getElementById('balance-months-wrapper');
+    if (!wrapper) return;
 
-	const hasData = STATE.schedules && Object.keys(STATE.schedules).length > 0;
-	if (!hasData) {
-    wrapper.innerHTML = '<p class="empty-msg">Generate a schedule to see the cumulative balance report.</p>';
-		return;
-	}
+    const hasData = STATE.schedules && Object.keys(STATE.schedules).length > 0;
+    if (!hasData) {
+        wrapper.innerHTML = '<p class="empty-msg">Generate a schedule to see the cumulative balance report.</p>';
+        if (monthsWrapper) monthsWrapper.innerHTML = '';
+        return;
+    }
 
-	const doctors = STATE.doctors;
-	const nonHosp = STATE.offices.filter(o => !o.isHospital);
-	const callCols = ['Wk Day', 'Wk Night', 'Fri Night', 'Wknd'];
-	const sessCols = ['Sessions', 'AM', 'PM', 'Late'];
-	const officeCols = nonHosp.map(o => o.name);
+    const doctors = STATE.doctors;
+    const nonHosp = STATE.offices.filter(o => !o.isHospital);
+    const callCols = ['Wk Day', 'Wk Night', 'Fri Night', 'Wknd'];
+    const sessCols = ['Sessions', 'AM', 'PM', 'Late'];
+    const officeCols = nonHosp.map(o => o.name);
 
-	let html = '<table class="sheet-table balance-table">';
-	html += '<thead><tr><th>Doctor</th>';
-	for (const c of [...callCols, ...sessCols]) html += `<th>${escapeHtml(c)}</th>`;
-	for (const o of officeCols) html += `<th>${escapeHtml(o)}</th>`;
-	html += '<th>Pref</th></tr></thead><tbody>';
+    let html = '<table class="sheet-table balance-table">';
+    html += '<thead><tr><th>Doctor</th>';
+    for (const c of [...callCols, ...sessCols]) html += `<th>${escapeHtml(c)}</th>`;
+    for (const o of officeCols) html += `<th>${escapeHtml(o)}</th>`;
+    html += '<th>Pref</th></tr></thead><tbody>';
 
-	for (const doc of doctors) {
-		const t = STATE.totals[doc.id] || {};
-		const visits = t.office_visits || {};
-		html += `<tr><td>${escapeHtml(doc.name)}</td>`;
-		html += `<td>${t.weekday_day || 0}</td>`;
-		html += `<td>${t.weekday_night || 0}</td>`;
-		html += `<td>${t.friday_night || 0}</td>`;
-		html += `<td>${t.weekend_blocks || 0}</td>`;
-		html += `<td>${t.total_sessions || 0}</td>`;
-		html += `<td>${t.am_sessions || 0}</td>`;
-		html += `<td>${t.pm_sessions || 0}</td>`;
-		html += `<td>${t.late_sessions || 0}</td>`;
-		for (const o of nonHosp) {
-			html += `<td>${visits[o.id] || 0}</td>`;
-		}
-		const mc = Object.values(STATE.schedules).pop()?.counts?.[doc.id];
-		const prefRate = mc?.preferredDayCallRate;
-		html += `<td>${prefRate != null ? (prefRate * 100).toFixed(0) + '%' : '—'}</td>`;
-		html += '</tr>';
-	}
+    for (const doc of doctors) {
+        const t = STATE.totals[doc.id] || {};
+        const visits = t.office_visits || {};
+        html += `<tr><td>${escapeHtml(doc.name)}</td>`;
+        html += `<td>${t.weekday_day || 0}</td>`;
+        html += `<td>${t.weekday_night || 0}</td>`;
+        html += `<td>${t.friday_night || 0}</td>`;
+        html += `<td>${t.weekend_blocks || 0}</td>`;
+        html += `<td>${t.total_sessions || 0}</td>`;
+        html += `<td>${t.am_sessions || 0}</td>`;
+        html += `<td>${t.pm_sessions || 0}</td>`;
+        html += `<td>${t.late_sessions || 0}</td>`;
+        for (const o of nonHosp) {
+            html += `<td>${visits[o.id] || 0}</td>`;
+        }
+        const mc = Object.values(STATE.schedules).pop()?.counts?.[doc.id];
+        const prefRate = mc?.preferredDayCallRate;
+        html += `<td>${prefRate != null ? (prefRate * 100).toFixed(0) + '%' : '—'}</td>`;
+        html += '</tr>';
+    }
 
-  const gini = calculateGiniFromTotals();
-  html += `<tr class="gini-row"><td>Call Fairness</td>`;
-  html += `<td class="${gini > 0.10 ? 'gini-warn' : 'gini-ok'}" colspan="4">${gini <= 0.10 ? 'Fair' : 'Uneven'} (${gini.toFixed(3)})</td>`;
-	html += '<td colspan="5"></td>';
-	for (const o of officeCols) html += '<td></td>';
-	html += '<td></td></tr></tbody></table>';
-	wrapper.innerHTML = html;
+    const gini = calculateGiniFromTotals();
+    html += `<tr class="gini-row"><td>Call Fairness</td>`;
+    html += `<td class="${gini > 0.10 ? 'gini-warn' : 'gini-ok'}" colspan="4">${gini <= 0.10 ? 'Fair' : 'Uneven'} (${gini.toFixed(3)})</td>`;
+    html += '<td colspan="5"></td>';
+    for (const o of officeCols) html += '<td></td>';
+    html += '<td></td></tr></tbody></table>';
+    wrapper.innerHTML = html;
+
+    if (monthsWrapper) {
+        const monthKeys = Object.keys(STATE.schedules).sort();
+        if (!monthKeys.length) {
+            monthsWrapper.innerHTML = '';
+            return;
+        }
+        let mHtml = '';
+        for (const mk of monthKeys) {
+            const sched = STATE.schedules[mk];
+            const parts = mk.split('-');
+            const mLabel = MONTHS[parseInt(parts[1])] + ' ' + parts[0];
+            const counts = sched.counts || {};
+            mHtml += `<div class="balance-month-block">`;
+            mHtml += `<div class="balance-month-title">${escapeHtml(mLabel)}</div>`;
+            mHtml += '<table class="sheet-table balance-table balance-month-table"><thead><tr><th>Doctor</th>';
+            for (const c of callCols) mHtml += `<th>${escapeHtml(c)}</th>`;
+            for (const c of sessCols) mHtml += `<th>${escapeHtml(c)}</th>`;
+            mHtml += '</tr></thead><tbody>';
+            for (const doc of doctors) {
+                const c = counts[doc.id];
+                if (!c) continue;
+                mHtml += `<tr><td>${escapeHtml(doc.name)}</td>`;
+                mHtml += `<td>${c.weekdayDayCalls || 0}</td>`;
+                mHtml += `<td>${c.weekdayNightCalls || 0}</td>`;
+                mHtml += `<td>${c.fridayNightCalls || 0}</td>`;
+                mHtml += `<td>${c.weekendBlocks || 0}</td>`;
+                mHtml += `<td>${c.totalSessions || 0}</td>`;
+                mHtml += `<td>${c.amSessions || 0}</td>`;
+                mHtml += `<td>${c.pmSessions || 0}</td>`;
+                mHtml += `<td>${c.lateSessions || 0}</td>`;
+                mHtml += '</tr>';
+            }
+            mHtml += '</tbody></table></div>';
+        }
+        monthsWrapper.innerHTML = mHtml;
+    }
 }
 
 function calculateGiniFromTotals() {
@@ -711,11 +755,23 @@ function escapeHtml(text) {
 }
 
 function refreshUI() {
-const activeTab = document.querySelector('.tab-btn.active');
-const tabName = activeTab ? activeTab.dataset.tab : 'setup';
-switchTab(tabName);
-updateDataStatus();
-updateWizardSummary();
+    const activeTab = document.querySelector('.tab-btn.active');
+    const tabName = activeTab ? activeTab.dataset.tab : 'setup';
+    if (tabName === 'setup') {
+        showWizardStep(wizardStep);
+        refreshBlackoutCalendar();
+    } else if (tabName === 'doctors') {
+        renderDoctorAccordion();
+    } else if (tabName === 'schedule') {
+        updateScheduleControls();
+        updateCalendarView();
+    } else if (tabName === 'balance') {
+        updateBalanceTable();
+    } else if (tabName === 'generate') {
+        refreshBlackoutCalendar();
+    }
+    updateDataStatus();
+    updateWizardSummary();
 }
 
 // ── Event listeners ─────────────────────────────────────────────────────────
@@ -737,10 +793,13 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // Wizard step dots clickable
-  document.querySelectorAll('.step-dot').forEach(dot => {
-    dot.addEventListener('click', () => showWizardStep(parseInt(dot.dataset.step)));
-  });
+    // Wizard step dots clickable
+    document.querySelectorAll('.step-dot').forEach(dot => {
+        dot.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showWizardStep(parseInt(dot.dataset.step));
+        });
+    });
 
 	// Wizard step 4 blackout select
 	document.getElementById('blackout-doctor-select')?.addEventListener('change', refreshBlackoutCalendar);
