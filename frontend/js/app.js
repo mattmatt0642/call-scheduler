@@ -111,25 +111,31 @@ function renderWizardDoctors() {
 }
 
 function renderWizardOffices() {
-	const el = document.getElementById('wiz-offices-list');
-	if (!el) return;
-	if (!STATE.offices.length) {
-    el.innerHTML = '<div class="empty-msg" style="padding:1.5rem">No offices yet. Click "Add Office" below to get started.</div>';
-		return;
-	}
-	el.innerHTML = STATE.offices.map(off => {
-		const icon = off.isHospital ? '⌁' : '○';
-		return `<div class="entity-card">
-			<div class="avatar" style="${off.isHospital ? 'background:var(--accent-dim);color:var(--accent)' : ''}">${icon}</div>
-			<div class="info">
-				<div class="name">${escapeHtml(off.name)}</div>
-				<div class="meta">max ${off.maxPerShift}/shift · ${off.isHospital ? 'Hospital' : 'Clinic'}</div>
-			</div>
-			<div class="actions">
-				<button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
-			</div>
-		</div>`;
-	}).join('');
+    const el = document.getElementById('wiz-offices-list');
+    if (!el) return;
+    if (!STATE.offices.length) {
+        el.innerHTML = '<div class="empty-msg" style="padding:1.5rem">No offices yet. Click "Add Office" below to get started.</div>';
+        return;
+    }
+    el.innerHTML = STATE.offices.map(off => {
+        const icon = off.isHospital ? '⌁' : '○';
+        return `<div class="entity-card">
+    <div class="avatar" style="${off.isHospital ? 'background:var(--accent-dim);color:var(--accent)' : ''}">${icon}</div>
+    <div class="info" style="flex:1">
+        <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
+        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+            <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
+            <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
+            </label>
+            <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
+            <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
+        </div>
+    </div>
+    <div class="actions">
+        <button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
+    </div>
+</div>`;
+    }).join('');
 }
 
 // ── Setup (backward compat for old tab IDs) ─────────────────────────────────
@@ -164,16 +170,26 @@ function removeDoctor(id) {
 }
 
 function addOffice() {
-  const id = 'off_' + generateId().slice(0, 5);
-  STATE.offices.push({
-    id, name: 'Office ' + (STATE.offices.length + 1),
-    isHospital: STATE.offices.length === 0,
-    maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
-  });
-  saveState();
-  console.log('[addOffice] Added:', id, 'Total offices:', STATE.offices.length, 'wizardStep:', wizardStep);
-  renderWizardOffices();
-  updateWizardSummary();
+    const id = 'off_' + generateId().slice(0, 5);
+    STATE.offices.push({
+        id, name: 'Office ' + (STATE.offices.length + 1),
+        isHospital: STATE.offices.length === 0,
+        maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
+    });
+    saveState();
+    console.log('[addOffice] Added:', id, 'Total offices:', STATE.offices.length, 'wizardStep:', wizardStep);
+    renderWizardOffices();
+    updateWizardSummary();
+}
+
+function updateOfficeField(officeId, field, value) {
+    const office = STATE.offices.find(o => o.id === officeId);
+    if (!office) return;
+    office[field] = value;
+    saveState();
+    if (field === 'isHospital' || field === 'name') renderWizardOffices();
+    if (field === 'isHospital') renderDoctorAccordion();
+    updateWizardSummary();
 }
 
 function removeOffice(id) {
