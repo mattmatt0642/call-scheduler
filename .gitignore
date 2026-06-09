@@ -5,3 +5,7 @@ backend/.venv
 .secret
 *.db
 handoff/
+*.bak
+session-*.md
+.agents/
+skills-lock.json
