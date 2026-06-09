@@ -157,77 +157,91 @@ class TestIsAvailable(unittest.TestCase):
             "d0", self.slot, [], self.slot_map, self.load,
             doc_map, self.hospital_id, set()))
 
+
     def test_post_call_hospital_allowed(self):
-        load_copy = {k: dict(v) for k, v in self.load.items()}
-        load_copy["d0"]["post_call_since"] = "2026-01-05"
-        hosp_slot = ShiftSlot(
+        call_slot = ShiftSlot(
             slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
             office_id="hosp", shift_type="call_day",
             start_time="07:00", end_time="19:00", max_doctors=1
         )
+        call_assignments = [Assignment(doctor_id="d0", slot_id=call_slot.slot_id)]
+        call_slot_map = {call_slot.slot_id: call_slot}
+        _update_load(self.load, "d0", call_slot, self.hospital_id)
+        hosp_office_slot = ShiftSlot(
+            slot_id="2026-01-06_hosp_office_am", date="2026-01-06",
+            office_id="hosp", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        call_slot_map[hosp_office_slot.slot_id] = hosp_office_slot
         self.assertTrue(_is_available(
-            "d0", hosp_slot, [], {hosp_slot.slot_id: hosp_slot}, load_copy,
-            self.doc_map, self.hospital_id, set()))
+            "d0", hosp_office_slot, call_assignments, call_slot_map,
+            self.load, self.doc_map, self.hospital_id, set()))
 
     def test_post_call_non_hospital_blocked(self):
-        load_copy = {k: dict(v) for k, v in self.load.items()}
-        load_copy["d0"]["post_call_since"] = "2026-01-05"
+        call_slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
+            office_id="hosp", shift_type="call_day",
+            start_time="07:00", end_time="19:00", max_doctors=1
+        )
+        call_assignments = [Assignment(doctor_id="d0", slot_id=call_slot.slot_id)]
+        call_slot_map = {call_slot.slot_id: call_slot}
+        _update_load(self.load, "d0", call_slot, self.hospital_id)
         north_slot = ShiftSlot(
             slot_id="2026-01-06_north_office_am", date="2026-01-06",
             office_id="north", shift_type="office_am",
             start_time="08:00", end_time="12:00", max_doctors=2
         )
+        call_slot_map[north_slot.slot_id] = north_slot
         self.assertFalse(_is_available(
-            "d0", north_slot, [], {north_slot.slot_id: north_slot}, load_copy,
-            self.doc_map, self.hospital_id, set()))
-
+            "d0", north_slot, call_assignments, call_slot_map,
+            self.load, self.doc_map, self.hospital_id, set()))
 
 class TestUpdateLoad(unittest.TestCase):
     def setUp(self):
-        self.doctors = _make_doctors(1)
-        self.offices = _make_offices()
-        self.hospital_id = "hosp"
-        self.load = _init_load(self.doctors, self.offices)
+            self.doctors = _make_doctors(1)
+            self.offices = _make_offices()
+            self.hospital_id = "hosp"
+            self.load = _init_load(self.doctors, self.offices)
 
     def test_call_day_increments(self):
-        slot = ShiftSlot(
-            slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
-            office_id="hosp", shift_type="call_day",
-            start_time="07:00", end_time="19:00", max_doctors=1,
-            call_balance_group="weekday_day"
-        )
-        _update_load(self.load, "d0", slot, self.hospital_id)
-        self.assertEqual(self.load["d0"]["weekday_day_calls"], 1)
+            slot = ShiftSlot(
+                slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
+                office_id="hosp", shift_type="call_day",
+                start_time="07:00", end_time="19:00", max_doctors=1,
+                call_balance_group="weekday_day"
+            )
+            _update_load(self.load, "d0", slot, self.hospital_id)
+            self.assertEqual(self.load["d0"]["weekday_day_calls"], 1)
 
     def test_call_night_increments(self):
-        slot = ShiftSlot(
-            slot_id="2026-01-05_hosp_call_night", date="2026-01-05",
-            office_id="hosp", shift_type="call_night",
-            start_time="19:00", end_time="07:00", max_doctors=1,
-            call_balance_group="weekday_night"
-        )
-        _update_load(self.load, "d0", slot, self.hospital_id)
-        self.assertEqual(self.load["d0"]["weekday_night_calls"], 1)
+            slot = ShiftSlot(
+                slot_id="2026-01-05_hosp_call_night", date="2026-01-05",
+                office_id="hosp", shift_type="call_night",
+                start_time="19:00", end_time="07:00", max_doctors=1,
+                call_balance_group="weekday_night"
+            )
+            _update_load(self.load, "d0", slot, self.hospital_id)
+            self.assertEqual(self.load["d0"]["weekday_night_calls"], 1)
 
     def test_friday_night_increments(self):
-        slot = ShiftSlot(
-            slot_id="2026-01-02_hosp_call_night", date="2026-01-02",
-            office_id="hosp", shift_type="call_night",
-            start_time="19:00", end_time="07:00", max_doctors=1,
-            call_balance_group="friday_night"
-        )
-        _update_load(self.load, "d0", slot, self.hospital_id)
-        self.assertEqual(self.load["d0"]["friday_night_calls"], 1)
+            slot = ShiftSlot(
+                slot_id="2026-01-02_hosp_call_night", date="2026-01-02",
+                office_id="hosp", shift_type="call_night",
+                start_time="19:00", end_time="07:00", max_doctors=1,
+                call_balance_group="friday_night"
+            )
+            _update_load(self.load, "d0", slot, self.hospital_id)
+            self.assertEqual(self.load["d0"]["friday_night_calls"], 1)
 
     def test_weekend_block_increments(self):
-        slot = ShiftSlot(
-            slot_id="2026-01-03_hosp_call_weekend", date="2026-01-03",
-            office_id="hosp", shift_type="call_weekend",
-            start_time="00:00", end_time="23:59", max_doctors=1,
-            is_weekend=True, call_balance_group="weekend_block"
-        )
-        _update_load(self.load, "d0", slot, self.hospital_id)
-        self.assertEqual(self.load["d0"]["weekend_blocks"], 1)
+            slot = ShiftSlot(
+                slot_id="2026-01-03_hosp_call_weekend", date="2026-01-03",
+                office_id="hosp", shift_type="call_weekend",
+                start_time="00:00", end_time="23:59", max_doctors=1,
+                is_weekend=True, call_balance_group="weekend_block"
+            )
+            _update_load(self.load, "d0", slot, self.hospital_id)
+            self.assertEqual(self.load["d0"]["weekend_blocks"], 1)
 
     def test_post_call_since_set(self):
         slot = ShiftSlot(
@@ -240,13 +254,13 @@ class TestUpdateLoad(unittest.TestCase):
         self.assertEqual(self.load["d0"]["post_call_since"], "2026-01-05")
 
     def test_office_session_increments(self):
-        slot = ShiftSlot(
-            slot_id="2026-01-05_hosp_office_am", date="2026-01-05",
-            office_id="hosp", shift_type="office_am",
-            start_time="08:00", end_time="12:00", max_doctors=2
-        )
-        _update_load(self.load, "d0", slot, self.hospital_id)
-        self.assertEqual(self.load["d0"]["total_sessions"], 1)
+            slot = ShiftSlot(
+                slot_id="2026-01-05_hosp_office_am", date="2026-01-05",
+                office_id="hosp", shift_type="office_am",
+                start_time="08:00", end_time="12:00", max_doctors=2
+            )
+            _update_load(self.load, "d0", slot, self.hospital_id)
+            self.assertEqual(self.load["d0"]["total_sessions"], 1)
 
 
 class TestPerDoctorBlackout(unittest.TestCase):

@@ -1,22 +1,27 @@
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional, Set
+from datetime import date as dt_class, timedelta
 from models import (DoctorProfile, Office, ShiftSlot, Assignment, ScheduleInput,
-    abs_times_overlap, get_call_balance_group)
+    abs_times_overlap, get_call_balance_group, get_days_in_month, get_nth_tuesdays)
+
+CALL_SHIFT_TYPES = {"call_day", "call_night", "call_weekend", "call_weekend_sun"}
+CLEARING_SHIFT_TYPES = {"office_am", "office_pm", "office_late", "surgical_am", "surgical_hosp_pm"}
+OFFICE_SESSION_TYPES = {"office_am", "office_pm", "office_late"}
 
 @dataclass
 class ConstraintViolation:
-    constraint_id:    str
-    constraint_name:  str
-    severity:         str
-    description:      str
+    constraint_id: str
+    constraint_name: str
+    severity: str
+    description: str
     affected_doctors: List[str]
-    affected_dates:   List[str]
-    suggestion:       str
+    affected_dates: List[str]
+    suggestion: str
 
 def validate_schedule(
-        inp: 'ScheduleInput',
-        slots: List[ShiftSlot],
-        assignments: List[Assignment]
+    inp: 'ScheduleInput',
+    slots: List[ShiftSlot],
+    assignments: List[Assignment]
 ) -> List[ConstraintViolation]:
     """
     Run all constraint checks on a completed schedule.
@@ -40,13 +45,25 @@ def validate_schedule(
                 suggestion = "Remove assignments for non-existent slots"
             ))
     violations += check_h1_capacity(slots, known_assignments, slot_map)
+    violations += check_h2_restricted_tuesday(slots, known_assignments, slot_map, inp.offices)
     violations += check_h3_call_coverage(slots, known_assignments, slot_map)
+    violations += check_h4_call_double(inp.doctors, known_assignments, slot_map)
     violations += check_h5_call_balance(inp.doctors, known_assignments, slot_map)
     violations += check_h6_no_overlap(inp.doctors, known_assignments, slot_map)
     violations += check_h7_surgical_pairing(known_assignments, slot_map)
     violations += check_h8_post_call_location(inp.doctors, inp.offices, slots, known_assignments, slot_map)
     violations += check_h9_allowed_offices(inp.doctors, known_assignments, slot_map)
     violations += check_h10_days_off(inp.doctors, known_assignments, slot_map, inp.day_off_dates)
+    violations += check_h11_locked_preserved(inp, slots, known_assignments, slot_map)
+    violations += check_h12_required_sessions(inp.doctors, known_assignments, slot_map, inp.day_off_dates, inp.year, inp.month, inp.offices)
+    violations += check_h13_late_shift_distinctness(slots, known_assignments, slot_map)
+    violations += check_s1_am_pm_balance(inp.doctors, known_assignments, slot_map, inp.year, inp.month)
+    violations += check_s2_office_ranking(inp.doctors, known_assignments, slot_map, inp.global_office_ranking)
+    violations += check_s3_late_shift_balance(inp.doctors, known_assignments, slot_map, inp.year, inp.month)
+    violations += check_s4_post_call_work_preference(inp.doctors, known_assignments, slot_map, inp.offices)
+    violations += check_s5_call_shift_preference(inp.doctors, known_assignments, slot_map)
+    violations += check_s6_day_night_preference(inp.doctors, known_assignments, slot_map)
+    violations += check_s7_office_variety(inp.doctors, known_assignments, slot_map, inp.offices)
     return violations
 
 def check_h1_capacity(
@@ -60,7 +77,7 @@ def check_h1_capacity(
     """
     violations = []
     a_docs = {}
-    
+
     for a in assignments:
         a_docs.setdefault(a.slot_id, []).append(a.doctor_id)
 
@@ -77,6 +94,69 @@ def check_h1_capacity(
             ))
     return violations
 
+def check_h2_restricted_tuesday(
+    slots: List[ShiftSlot],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    offices: List[Office]
+) -> List[ConstraintViolation]:
+    """
+    H2: 1st, 3rd, and 5th Tuesday of each month, hospital office has a lower
+    max capacity (restricted_tuesday_max). Applies to both AM and PM slots
+    at the hospital office only.
+    """
+    violations = []
+    hospital = next((o for o in offices if o.is_hospital), None)
+    if not hospital:
+        return violations
+
+    restricted_slots = [s for s in slots if s.is_restricted_tuesday]
+
+    a_docs = {}
+    for a in assignments:
+        a_docs.setdefault(a.slot_id, []).append(a.doctor_id)
+
+    for slot in restricted_slots:
+        if slot.office_id != hospital.id:
+            violations.append(ConstraintViolation(
+                constraint_id = "H2",
+                constraint_name = "Restricted Tuesday",
+                severity = "hard",
+                description = f"Slot {slot.slot_id} is marked restricted_tuesday but is not at the hospital office ({slot.office_id}).",
+                affected_doctors = [],
+                affected_dates = [slot.date],
+                suggestion = "Check slot_generator: is_restricted_tuesday should only apply to hospital office slots."
+            ))
+            continue
+
+        if slot.shift_type not in ("office_am", "office_pm"):
+            continue
+
+        count = len(a_docs.get(slot.slot_id, []))
+        if count > slot.max_doctors:
+            violations.append(ConstraintViolation(
+                constraint_id = "H2",
+                constraint_name = "Restricted Tuesday",
+                severity = "hard",
+                description = f"Restricted Tuesday slot {slot.slot_id} has {count} doctors assigned but max is {slot.max_doctors} (restricted_tuesday_max={hospital.restricted_tuesday_max}).",
+                affected_doctors = a_docs.get(slot.slot_id, []),
+                affected_dates = [slot.date],
+                suggestion = "Reduce assignments on this restricted Tuesday or increase restricted_tuesday_max."
+            ))
+
+        if slot.max_doctors != hospital.restricted_tuesday_max:
+            violations.append(ConstraintViolation(
+                constraint_id = "H2",
+                constraint_name = "Restricted Tuesday",
+                severity = "hard",
+                description = f"Restricted Tuesday slot {slot.slot_id} has max_doctors={slot.max_doctors} but hospital restricted_tuesday_max={hospital.restricted_tuesday_max}. Slot generator may not have applied the restriction.",
+                affected_doctors = [],
+                affected_dates = [slot.date],
+                suggestion = "Check slot_generator: restricted Tuesday slots must have max_doctors set to restricted_tuesday_max."
+            ))
+
+    return violations
+
 def check_h3_call_coverage(
     slots: List[ShiftSlot],
     assignment: List[Assignment],
@@ -86,26 +166,102 @@ def check_h3_call_coverage(
     H3: Each call slot must have exactly 1 doctor assigned.
     """
     violations = []
-    call_slots = [s for s in slots if s.shift_type in ["call_day", "call_night", "call_weekend", "call_weekend_sun"]]
+    call_slots = [s for s in slots if s.shift_type in CALL_SHIFT_TYPES]
     assigned = {}
     for a in assignment:
         slot = slot_map[a.slot_id]
-        if slot.shift_type in ["call_day", "call_night", "call_weekend", "call_weekend_sun"]:
+        if slot.shift_type in CALL_SHIFT_TYPES:
             assigned.setdefault(a.slot_id, []).append(a.doctor_id)
 
-        
     for slot in call_slots:
         count = len(assigned.get(slot.slot_id, []))
         if count == 0:
+            pref_note = ""
+            if slot.call_balance_group in ("friday_night", "weekend_block"):
+                pref_note = " (preferences have no influence on this balance group)"
             violations.append(ConstraintViolation(
                 constraint_id = "H3",
                 constraint_name = "call coverage",
                 severity = "hard",
-                description = f"No doctor assigned to {slot.shift_type} on {slot.date}. (balance group: {slot.call_balance_group})",
+                description = f"No doctor assigned to {slot.shift_type} on {slot.date}. (balance group: {slot.call_balance_group}){pref_note}",
                 affected_doctors = [],
                 affected_dates = [slot.date],
                 suggestion = "Check if enough call-eligible doctors are available. Consider reducing max call limits or removing blackout dates."
             ))
+        elif count > 1:
+            violations.append(ConstraintViolation(
+                constraint_id = "H3",
+                constraint_name = "call coverage",
+                severity = "hard",
+                description = f"Slot {slot.slot_id} has {count} doctors assigned - must be exactly 1.",
+                affected_doctors = assigned[slot.slot_id],
+                affected_dates = [slot.date],
+                suggestion = "Solver bug - report with schedule state."
+            ))
+    return violations
+
+def check_h4_call_double(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    H4: A call double = call_day (07:00-19:00) + call_night (19:00-07:00)
+    on the SAME calendar date, weekdays (Mon-Thu) only.
+    Night->day is never a double. Weekend blocks are not doubles.
+    Doctors with call_shift_preference="single" must never get doubles.
+    """
+    violations = []
+    doc_map = {d.id: d for d in doctors}
+
+    by_doc = {}
+    for a in assignments:
+        slot = slot_map[a.slot_id]
+        if slot.shift_type in ("call_day", "call_night"):
+            by_doc.setdefault(a.doctor_id, []).append(slot)
+
+    for doc_id, call_slots in by_doc.items():
+        doc = doc_map.get(doc_id)
+        if not doc:
+            continue
+
+        day_by_date = {}
+        night_by_date = {}
+        for s in call_slots:
+            if s.shift_type == "call_day":
+                day_by_date[s.date] = s
+            elif s.shift_type == "call_night":
+                night_by_date[s.date] = s
+
+        for date_str in day_by_date:
+            if date_str not in night_by_date:
+                continue
+
+            d = dt_class.fromisoformat(date_str)
+            dow = d.weekday()
+
+            if dow >= 5:
+                violations.append(ConstraintViolation(
+                    constraint_id = "H4",
+                    constraint_name = "Call double",
+                    severity = "hard",
+                    description = f"Dr. {doc.name} has call_day + call_night on {date_str} (weekend) - doubles cannot be on weekends.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [date_str],
+                    suggestion = "Weekend call doubles are not allowed. Assign a different doctor to one of these call slots."
+                ))
+
+            if doc.call_shift_preference == "single":
+                violations.append(ConstraintViolation(
+                    constraint_id = "H4",
+                    constraint_name = "Call double",
+                    severity = "hard",
+                    description = f"Dr. {doc.name} has call_day + call_night on {date_str} but their call_shift_preference is 'single'.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [date_str],
+                    suggestion = "Change the doctor's call_shift_preference to 'double' or 'no_preference', or reassign one of the call slots."
+                ))
+
     return violations
 
 def check_h5_call_balance(
@@ -133,12 +289,15 @@ def check_h5_call_balance(
         if a.doctor_id not in counts:
             continue
         if slot.shift_type == "call_weekend":
-            counts[a.doctor_id]["weekend_block"] += 1
+            key = (a.doctor_id, slot.date)
+            if key not in weekend_seen:
+                weekend_seen.add(key)
+                counts[a.doctor_id]["weekend_block"] += 1
         elif slot.shift_type == "call_weekend_sun":
             pass
         else:
             counts[a.doctor_id][slot.call_balance_group] += 1
-    
+
     for group in groups:
         group_counts = [counts[d.id][group] for d in eligible]
         if not group_counts:
@@ -147,14 +306,17 @@ def check_h5_call_balance(
         if max_c - min_c > 1:
             over = [d.name for d in eligible if counts[d.id][group] == max_c]
             under = [d.name for d in eligible if counts[d.id][group] == min_c]
+            pref_note = ""
+            if group in ("friday_night", "weekend_block"):
+                pref_note = " NOTE: preferences have no influence on this group."
             violations.append(ConstraintViolation(
                 constraint_id = f"H5_{group}",
                 constraint_name = f"call balance ({group})",
                 severity = "hard",
-                description = f"Imbalance in {group}: max={max_c}, min={min_c}. Over: {over}. Under: {under}",
+                description = f"Imbalance in {group}: max={max_c}, min={min_c}.{pref_note} Over: {over}. Under: {under}",
                 affected_doctors = [d.id for d in eligible],
                 affected_dates = [],
-                suggestion = f"Reassign one {group} call from an over-assigned doctor to an under-assigned one. Note for friday_night and weekend_block, preferences have no influence - check if blackout dates are causing the imbalance."
+                suggestion = f"Reassign one {group} call from an over-assigned doctor to an under-assigned one. Check blackout dates."
             ))
     return violations
 
@@ -164,49 +326,41 @@ def check_h6_no_overlap(
     slot_map: Dict[str, ShiftSlot]
 ) -> List[ConstraintViolation]:
     """
-    H6: No doctor may have two assignments whose time ranges overlap
+    H6: No doctor may have two assignments whose time ranges overlap,
     including overnight spillover to the next calendar day.
+    Groups by doctor only, checks every pair using abs_times_overlap.
     """
-    from datetime import date as dt, timedelta
     violations = []
-    by_doc_date = {}
+    by_doctor = {}
     for a in assignments:
-        slot = slot_map[a.slot_id]
-        key = (a.doctor_id, slot.date)
-        by_doc_date.setdefault(key, []).append(slot)
+        slot = slot_map.get(a.slot_id)
+        if slot:
+            by_doctor.setdefault(a.doctor_id, []).append(slot)
 
-    for (doc_id, date), day_slots in by_doc_date.items():
-        for i, s1 in enumerate(day_slots):
-            for s2 in day_slots[i+1:]:
+    doc_name_map = {d.id: d.name for d in doctors}
+
+    _surgical_types = ("surgical_am", "surgical_hosp_pm")
+    for doc_id, doc_slots in by_doctor.items():
+        for i, s1 in enumerate(doc_slots):
+            for s2 in doc_slots[i + 1:]:
                 if abs_times_overlap(s1, s2):
-                    doc_name = next((d.name for d in doctors if d.id == doc_id), doc_id)
+                    same_date_surgical_call = (
+                        s1.date == s2.date
+                        and ((s1.shift_type == "call_day" and s2.shift_type in _surgical_types)
+                             or (s2.shift_type == "call_day" and s1.shift_type in _surgical_types))
+                    )
+                    if same_date_surgical_call:
+                        continue
+                    name = doc_name_map.get(doc_id, doc_id)
                     violations.append(ConstraintViolation(
                         constraint_id = "H6",
                         constraint_name = "no overlap",
                         severity = "hard",
-                        description = f"Dr. {doc_name} has overlapping shifts on {date}: {s1.shift_type} ({s1.start_time}-{s1.end_time}) and {s2.shift_type} ({s2.start_time} - {s2.end_time})",
+                        description = f"Dr. {name}: {s1.shift_type} on {s1.date} ({s1.start_time}-{s1.end_time}) overlaps with {s2.shift_type} on {s2.date} ({s2.start_time}-{s2.end_time}). Note: overnight shifts extend into the next calendar day.",
                         affected_doctors = [doc_id],
-                        affected_dates = [date],
-                        suggestion = "Check pre-filled assignements for this doctor on this date. One of these assignments must be removed or moved."
+                        affected_dates = sorted({s1.date, s2.date}),
+                        suggestion = "Remove one of these assignments. If one is a call_night, the restriction applies until 07:00 the following day."
                     ))
-        overnight = [s for s in day_slots if s.end_time < s.start_time
-                      or s.shift_type in ("call_night", "call_weekend")]
-        if overnight:
-            next_day = str(dt.fromisoformat(date) + timedelta(days=1))
-            next_slots = by_doc_date.get((doc_id, next_day), [])
-            for s1 in overnight:
-                for s2 in next_slots:
-                    if abs_times_overlap(s1, s2):
-                        doc_name = next((d.name for d in doctors if d.id == doc_id), doc_id)
-                        violations.append(ConstraintViolation(
-                            constraint_id = "H6",
-                            constraint_name = "no overlap",
-                            severity = "hard",
-                            description = f"Dr. {doc_name} has overlapping shifts on {date}: {s1.shift_type} ({s1.start_time}-{s1.end_time}) and {s2.shift_type} ({s2.start_time} - {s2.end_time})",
-                            affected_doctors = [doc_id],
-                            affected_dates = [date],
-                            suggestion = "Check pre-filled assignements for this doctor on this date. One of these assignments must be removed or moved."
-                        ))
     return violations
 
 def check_h7_surgical_pairing(
@@ -214,28 +368,45 @@ def check_h7_surgical_pairing(
     slot_map: Dict[str, ShiftSlot]
 ) -> List[ConstraintViolation]:
     """
-    H7: Every surgical_am aassignment must have a corresponding
+    H7: Every surgical_am assignment must have a corresponding
     surgical_hosp_pm assignment for the same doctor on the same date.
     They are always assigned as a pair - never one without the other.
 
-    Check the reverse: every surgical_hosp_pm must have a paired surgical_am.
+    Also checks reverse: every surgical_hosp_pm must have a paired surgical_am.
     """
     violations = []
     surgical_am = [a for a in assignments if slot_map[a.slot_id].shift_type == "surgical_am"]
-    by_doc_date = {(a.doctor_id, slot_map[a.slot_id].date): a for a in assignments if slot_map[a.slot_id].shift_type == "surgical_hosp_pm"}
+    surgical_pm = [a for a in assignments if slot_map[a.slot_id].shift_type == "surgical_hosp_pm"]
+
+    by_doc_date_am = {(a.doctor_id, slot_map[a.slot_id].date): a for a in surgical_am}
+    by_doc_date_pm = {(a.doctor_id, slot_map[a.slot_id].date): a for a in surgical_pm}
 
     for a in surgical_am:
-        date = slot_map[a.slot_id].date
-        if (a.doctor_id, date) not in by_doc_date:
+        d = slot_map[a.slot_id].date
+        if (a.doctor_id, d) not in by_doc_date_pm:
             violations.append(ConstraintViolation(
                 constraint_id = "H7",
                 constraint_name = "surgical_pairing",
                 severity = "hard",
-                description = f"Doctor {a.doctor_id} has surgical AM on {date} but no paired hospital office PM.",
-                affected_doctors = [a.doctor_id],    
-                affected_dates = [date],
-                suggestion = "Assign the same doctor to the hospital office PM slot on this date, or remove the surgical AM assignment.",   
+                description = f"Doctor {a.doctor_id} has surgical AM on {d} but no paired hospital office PM.",
+                affected_doctors = [a.doctor_id],
+                affected_dates = [d],
+                suggestion = "Assign the same doctor to the hospital office PM slot on this date, or remove the surgical AM assignment.",
             ))
+
+    for a in surgical_pm:
+        d = slot_map[a.slot_id].date
+        if (a.doctor_id, d) not in by_doc_date_am:
+            violations.append(ConstraintViolation(
+                constraint_id = "H7",
+                constraint_name = "surgical_pairing",
+                severity = "hard",
+                description = f"Doctor {a.doctor_id} has surgical_hosp_pm on {d} but no paired surgical AM.",
+                affected_doctors = [a.doctor_id],
+                affected_dates = [d],
+                suggestion = "Assign the same doctor to the surgical AM slot on this date, or remove the surgical_hosp_pm assignment.",
+            ))
+
     return violations
 
 def check_h8_post_call_location(
@@ -246,34 +417,38 @@ def check_h8_post_call_location(
     slot_map: Dict[str, ShiftSlot],
 ) -> List[ConstraintViolation]:
     """H8: After any call shift, a doctor's next non-call assignment must be
-    at the hospital office. The restriction clears after one hospital office shift.
+    at the hospital office. Restriction clears after one hospital office shift.
     """
     violations = []
     hospital_id = next((o.id for o in offices if o.is_hospital), None)
     if not hospital_id:
         return violations
+
     for doc in doctors:
-        doc_assignments = sorted([a for a in assignments if a.doctor_id == doc.id],
-                                 key = lambda a: (slot_map[a.slot_id].date, slot_map[a.slot_id].start_time))
-        post_call = False
-        for a in doc_assignments:
-            slot = slot_map[a.slot_id]
-            if post_call:
-                if slot.shift_type not in ["call_day", "call_night", "call_weekend", "call_weekend_sun"]:
-                    if slot.office_id != hospital_id:
+        doc_slots = sorted(
+            [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc.id],
+            key=lambda x: (x[0].date, x[0].start_time)
+        )
+
+        post_call_restricted = False
+        for slot, _ in doc_slots:
+            if post_call_restricted:
+                if slot.shift_type in CLEARING_SHIFT_TYPES:
+                    if slot.office_id == hospital_id:
+                        post_call_restricted = False
+                    else:
                         violations.append(ConstraintViolation(
                             constraint_id = "H8",
                             constraint_name = "post-call location",
                             severity = "hard",
-                            description = f"Dr. {doc.name} assigned to non-hospital office ({slot.office_id}) on {slot.date} directly after a call. Must complete a hospital office shift first.",
+                            description = f"Dr. {doc.name} assigned to non-hospital office ({slot.office_id}) on {slot.date} ({slot.shift_type}) directly after a call. Must complete a hospital office shift first.",
                             affected_doctors = [doc.id],
                             affected_dates = [slot.date],
-                            suggestion = "Check pre-filled assignements for this doctor on this date. One of these assignments must be removed or moved."
+                            suggestion = "Insert a hospital office AM or PM shift between the call shift and this assignment."
                         ))
-                    else:
-                        post_call = False
-            if slot.shift_type in ["call_day", "call_night", "call_weekend", "call_weekend_sun"]:
-                post_call = True
+            if slot.shift_type in CALL_SHIFT_TYPES:
+                post_call_restricted = True
+
     return violations
 
 def check_h9_allowed_offices(
@@ -284,8 +459,6 @@ def check_h9_allowed_offices(
     """
     H9: Doctors with allowed_offices set (not None) may only appear
     at offices in that list.
-
-    Skip is_locked assignments
     """
     violations = []
     doc_map = {d.id: d for d in doctors}
@@ -307,125 +480,684 @@ def check_h9_allowed_offices(
     return violations
 
 def check_h10_days_off(
- doctors: List[DoctorProfile],
- assignments: List[Assignment],
- slot_map: Dict[str, ShiftSlot],
- day_off_dates
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    day_off_dates
 ) -> List[ConstraintViolation]:
- """
- H10: No doctor may be assigned on:
- - Any date in day_off_dates for THIS doctor (per-doctor if dict), period-aware
- - Any date whose day_of_week is in the doctor's standing_days_off
+    """
+    H10: No doctor may be assigned on:
+    - Any date in day_off_dates for THIS doctor (per-doctor if dict), period-aware
+    - Any date whose day_of_week is in the doctor's standing_days_off
 
- Period-aware: all_day blocks all shifts; morning blocks AM shifts;
- afternoon blocks PM shifts; custom blocks overlapping time windows.
+    Period-aware: all_day blocks all shifts; morning blocks AM shifts;
+    afternoon blocks PM shifts; custom blocks overlapping time windows.
+    """
+    violations = []
+    doc_map = {d.id: d for d in doctors}
 
- Skip is_locked assignments
- """
- from datetime import date as dt_class
- violations = []
- doc_map = {d.id: d for d in doctors}
+    SHIFT_PERIODS = {
+        "office_am": "morning",
+        "office_pm": "afternoon",
+        "office_late": "afternoon",
+        "call_day": "all_day",
+        "call_night": "all_day",
+        "surgical_am": "morning",
+        "surgical_hosp_pm": "afternoon",
+    }
+    SHIFT_TIMES = {
+        "office_am": ("08:00", "12:00"),
+        "office_pm": ("13:00", "17:00"),
+        "office_late": ("13:30", "18:30"),
+        "call_day": ("07:00", "19:00"),
+        "call_night": ("19:00", "07:00"),
+        "surgical_am": ("07:00", "12:00"),
+        "surgical_hosp_pm": ("13:00", "17:00"),
+    }
 
- SHIFT_PERIODS = {
-  "office_am": "morning",
-  "office_pm": "afternoon",
-  "office_late": "afternoon",
-  "call_day": "all_day",
-  "call_night": "all_day",
-  "surgical_am": "morning",
-  "surgical_hosp_pm": "afternoon",
- }
- SHIFT_TIMES = {
-  "office_am": ("08:00", "12:00"),
-  "office_pm": ("13:00", "17:00"),
-  "office_late": ("13:30", "18:30"),
-  "call_day": ("07:00", "19:00"),
-  "call_night": ("19:00", "07:00"),
-  "surgical_am": ("07:00", "12:00"),
-  "surgical_hosp_pm": ("13:00", "17:00"),
- }
+    def _times_overlap(s1, e1, s2, e2):
+        def to_min(t):
+            h, m = t.split(":")
+            return int(h) * 60 + int(m)
+        a1, b1 = to_min(s1), to_min(e1)
+        a2, b2 = to_min(s2), to_min(e2)
+        if b1 <= a1:
+            b1 += 24 * 60
+        if b2 <= a2:
+            b2 += 24 * 60
+        return a1 < b2 and a2 < b1
 
- def _times_overlap(s1, e1, s2, e2):
-  def to_min(t):
-   h, m = t.split(":")
-   return int(h) * 60 + int(m)
-  a1, b1 = to_min(s1), to_min(e1)
-  a2, b2 = to_min(s2), to_min(e2)
-  if b1 <= a1:
-   b1 += 24 * 60
-  if b2 <= a2:
-   b2 += 24 * 60
-  return a1 < b2 and a2 < b1
+    def _is_blocked_by_entry(entry, slot_type):
+        period = entry.get("period", "all_day")
+        if period == "all_day":
+            return True
+        slot_period = SHIFT_PERIODS.get(slot_type, "all_day")
+        if slot_period == "all_day":
+            return True
+        if period == "morning" and slot_period == "morning":
+            return True
+        if period == "afternoon" and slot_period == "afternoon":
+            return True
+        if period == "custom":
+            st = entry.get("startTime")
+            et = entry.get("endTime")
+            shift_times = SHIFT_TIMES.get(slot_type)
+            if st and et and shift_times:
+                return _times_overlap(shift_times[0], shift_times[1], st, et)
+            return True
+        return False
 
- def _is_blocked_by_entry(entry, slot_type):
-  period = entry.get("period", "all_day")
-  if period == "all_day":
-   return True
-  slot_period = SHIFT_PERIODS.get(slot_type, "all_day")
-  if slot_period == "all_day":
-   return True
-  if period == "morning" and slot_period == "morning":
-   return True
-  if period == "afternoon" and slot_period == "afternoon":
-   return True
-  if period == "custom":
-   st = entry.get("startTime")
-   et = entry.get("endTime")
-   shift_times = SHIFT_TIMES.get(slot_type)
-   if st and et and shift_times:
-    return _times_overlap(shift_times[0], shift_times[1], st, et)
-   return True
-  return False
+    for a in assignments:
+        if a.is_locked:
+            continue
+        doc = doc_map.get(a.doctor_id)
+        if not doc:
+            continue
+        slot = slot_map[a.slot_id]
 
- for a in assignments:
-  if a.is_locked:
-   continue
-  doc = doc_map.get(a.doctor_id)
-  if not doc:
-   continue
-  slot = slot_map[a.slot_id]
+        if isinstance(day_off_dates, dict):
+            raw_entries = day_off_dates.get(doc.id, [])
+        else:
+            raw_entries = list(day_off_dates)
 
-  if isinstance(day_off_dates, dict):
-   raw_entries = day_off_dates.get(doc.id, [])
-  else:
-   raw_entries = list(day_off_dates)
+        date_entries = [e for e in raw_entries if (isinstance(e, dict) and e.get("date") == slot.date) or (isinstance(e, str) and e == slot.date)]
 
-  date_entries = [e for e in raw_entries if (isinstance(e, dict) and e.get("date") == slot.date) or (isinstance(e, str) and e == slot.date)]
+        blocked = False
+        for e in date_entries:
+            if isinstance(e, str):
+                blocked = True
+                break
+            elif isinstance(e, dict):
+                if _is_blocked_by_entry(e, slot.shift_type):
+                    blocked = True
+                    break
 
-  blocked = False
-  for e in date_entries:
-   if isinstance(e, str):
-    blocked = True
-    break
-   elif isinstance(e, dict):
-    if _is_blocked_by_entry(e, slot.shift_type):
-     blocked = True
-     break
+        if blocked:
+            violations.append(ConstraintViolation(
+                constraint_id = "H10",
+                constraint_name = "Time off",
+                severity = "hard",
+                description = f"Dr. {doc.name} assigned on {slot.date} ({slot.shift_type}) which conflicts with their time off.",
+                affected_doctors = [doc.id],
+                affected_dates = [slot.date],
+                suggestion = "Remove this assignment or update the time-off entry."
+            ))
+            continue
 
-  if blocked:
-   violations.append(ConstraintViolation(
-    constraint_id = "H10",
-    constraint_name = "Time off",
-    severity = "hard",
-    description = f"Dr. {doc.name} assigned on {slot.date} ({slot.shift_type}) which conflicts with their time off.",
-    affected_doctors = [doc.id],
-    affected_dates = [slot.date],
-    suggestion = "Remove this assignment or update the time-off entry."
-   ))
-   continue
+        dow = dt_class.fromisoformat(slot.date).weekday()
+        if dow in doc.standing_days_off:
+            violations.append(ConstraintViolation(
+                constraint_id = "H10",
+                constraint_name = "Time off",
+                severity = "hard",
+                description = f"Dr. {doc.name} assigned on {slot.date} (day_of_week={dow}) which is in their standing_days_off: {doc.standing_days_off}.",
+                affected_doctors = [doc.id],
+                affected_dates = [slot.date],
+                suggestion = "Remove this assignment or update standing_days_off."
+            ))
+    return violations
 
-  dow = dt_class.fromisoformat(slot.date).weekday()
-  if dow in doc.standing_days_off:
-   violations.append(ConstraintViolation(
-    constraint_id = "H10",
-    constraint_name = "Time off",
-    severity = "hard",
-    description = f"Dr. {doc.name} assigned on {slot.date} (day_of_week={dow}) which is in their standing_days_off: {doc.standing_days_off}.",
-    affected_doctors = [doc.id],
-    affected_dates = [slot.date],
-    suggestion = "Remove this assignment or update standing_days_off."
-   ))
- return violations
+def check_h11_locked_preserved(
+    inp: ScheduleInput,
+    slots: List[ShiftSlot],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    H11: Pre-scheduled assignments (recurring + one-time overrides + locked)
+    must be present in the output. The solver cannot move or remove them.
+    """
+    violations = []
+
+    from scheduler import expand_recurring_slots, expand_one_time_overrides
+
+    slot_id_set = set(slot_map.keys())
+    recurring = expand_recurring_slots(inp.doctors, slots, inp.year, inp.month)
+    overrides = expand_one_time_overrides(inp.doctors, inp.year, inp.month, slot_id_set)
+    all_locked = {(a.doctor_id, a.slot_id) for a in inp.locked_assignments + recurring + overrides}
+
+    actual = {(a.doctor_id, a.slot_id) for a in assignments}
+    missing = all_locked - actual
+
+    for doc_id, slot_id in sorted(missing):
+        slot = slot_map.get(slot_id)
+        date_str = slot.date if slot else "unknown"
+        violations.append(ConstraintViolation(
+            constraint_id = "H11",
+            constraint_name = "Locked assignment",
+            severity = "hard",
+            description = f"Locked assignment missing: doctor {doc_id} to slot {slot_id} on {date_str}.",
+            affected_doctors = [doc_id],
+            affected_dates = [date_str] if slot else [],
+            suggestion = "The solver removed a pre-scheduled assignment. Check that locked assignments are passed correctly and not overridden by other constraints."
+        ))
+
+    return violations
+
+def check_h12_required_sessions(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    day_off_dates,
+    year: int,
+    month: int,
+    offices: List[Office]
+) -> List[ConstraintViolation]:
+    """
+    H12: Each doctor must meet their required_sessions_per_week per week.
+    Proportionally reduced for day-off days: each full day off reduces that
+    week's requirement by approximately 1 session.
+    Sessions must be spread across multiple office locations.
+    """
+    violations = []
+    days = get_days_in_month(year, month)
+    max_week = max(d['week_num'] for d in days) if days else 0
+
+    for doc in doctors:
+        doc_assignments = [a for a in assignments if a.doctor_id == doc.id]
+
+        sessions_by_week = {}
+        offices_by_week = {}
+        for a in doc_assignments:
+            slot = slot_map[a.slot_id]
+            if slot.shift_type not in OFFICE_SESSION_TYPES:
+                continue
+            day_info = next((d for d in days if d['date'] == slot.date), None)
+            if not day_info:
+                continue
+            wn = day_info['week_num']
+            sessions_by_week[wn] = sessions_by_week.get(wn, 0) + 1
+            if wn not in offices_by_week:
+                offices_by_week[wn] = set()
+            offices_by_week[wn].add(slot.office_id)
+
+        day_off_count_by_week = {}
+        if isinstance(day_off_dates, dict):
+            doc_days_off = day_off_dates.get(doc.id, [])
+        else:
+            doc_days_off = list(day_off_dates)
+
+        for entry in doc_days_off:
+            if isinstance(entry, str):
+                d_str = entry
+            elif isinstance(entry, dict):
+                d_str = entry.get("date", "")
+            else:
+                continue
+            day_info = next((d for d in days if d['date'] == d_str), None)
+            if day_info:
+                wn = day_info['week_num']
+                day_off_count_by_week[wn] = day_off_count_by_week.get(wn, 0) + 1
+
+        for wn in range(max_week + 1):
+            week_sessions = sessions_by_week.get(wn, 0)
+            day_offs = day_off_count_by_week.get(wn, 0)
+
+            work_days_in_week = 5 - day_offs
+            if work_days_in_week <= 0:
+                continue
+
+            reduction = int(day_offs * doc.required_sessions_per_week / 5)
+            adjusted = max(0, doc.required_sessions_per_week - reduction)
+
+            if week_sessions < adjusted:
+                violations.append(ConstraintViolation(
+                    constraint_id = "H12",
+                    constraint_name = "Required sessions",
+                    severity = "hard",
+                    description = f"Dr. {doc.name} has {week_sessions} office sessions in week {wn} but required is {adjusted} (base={doc.required_sessions_per_week}, day_offs={day_offs}, reduction={reduction}).",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Add more office sessions for this doctor in this week, or reduce required_sessions_per_week, or reduce day-off dates."
+                ))
+
+            week_offices = offices_by_week.get(wn, set())
+            eligible_offices = set()
+            if doc.allowed_offices is not None:
+                eligible_offices = set(doc.allowed_offices)
+            else:
+                eligible_offices = {o.id for o in offices if not o.is_hospital}
+
+            if len(eligible_offices) >= 2 and week_sessions >= 3 and len(week_offices) < 2:
+                violations.append(ConstraintViolation(
+                    constraint_id = "H12",
+                    constraint_name = "Required sessions (variety)",
+                    severity = "hard",
+                    description = f"Dr. {doc.name} has {week_sessions} sessions in week {wn} but only uses {len(week_offices)} office(s). Must spread across multiple offices.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Assign this doctor to at least 2 different offices in this week."
+                ))
+
+    return violations
+
+def check_h13_late_shift_distinctness(
+    slots: List[ShiftSlot],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    H13: The Mon/Thu 13:30-18:30 office_late slot is a third independent slot.
+    It does NOT replace the 13:00-17:00 PM slot. Both exist and can be filled
+    independently. Verifies that for every office_late slot, the corresponding
+    office_pm slot also exists in the schedule's slot list.
+    """
+    violations = []
+
+    late_slots = [s for s in slots if s.shift_type == "office_late"]
+
+    for late_slot in late_slots:
+        pm_slot_id = f"{late_slot.date}_{late_slot.office_id}_office_pm"
+        if pm_slot_id not in slot_map:
+            violations.append(ConstraintViolation(
+                constraint_id = "H13",
+                constraint_name = "Late shift distinctness",
+                severity = "hard",
+                description = f"office_late slot {late_slot.slot_id} exists but corresponding office_pm slot {pm_slot_id} is missing on {late_slot.date}.",
+                affected_doctors = [],
+                affected_dates = [late_slot.date],
+                suggestion = "Check slot_generator: office_late slots require a paired office_pm slot on the same date and office."
+            ))
+
+    return violations
+
+def check_s1_am_pm_balance(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    year: int,
+    month: int
+) -> List[ConstraintViolation]:
+    """
+    S1: Weekly soft preference for roughly equal AM and PM sessions.
+    AM = office_am. PM = office_pm + office_late.
+    """
+    violations = []
+    days = get_days_in_month(year, month)
+    max_week = max(d['week_num'] for d in days) if days else 0
+
+    for doc in doctors:
+        am_by_week = {}
+        pm_by_week = {}
+        for a in assignments:
+            if a.doctor_id != doc.id:
+                continue
+            slot = slot_map[a.slot_id]
+            if slot.shift_type not in OFFICE_SESSION_TYPES:
+                continue
+            day_info = next((d for d in days if d['date'] == slot.date), None)
+            if not day_info:
+                continue
+            wn = day_info['week_num']
+            if slot.shift_type == "office_am":
+                am_by_week[wn] = am_by_week.get(wn, 0) + 1
+            else:
+                pm_by_week[wn] = pm_by_week.get(wn, 0) + 1
+
+        for wn in range(max_week + 1):
+            am = am_by_week.get(wn, 0)
+            pm = pm_by_week.get(wn, 0)
+            total = am + pm
+            if total < 3:
+                continue
+
+            pref = doc.am_pm_preference
+            if pref == "balanced" and abs(am - pm) > 2:
+                violations.append(ConstraintViolation(
+                    constraint_id = "S1",
+                    constraint_name = "AM/PM balance",
+                    severity = "soft",
+                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: balanced). Difference > 2.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Rebalance AM and PM sessions for this doctor in this week."
+                ))
+            elif pref == "am_heavy" and am < pm:
+                violations.append(ConstraintViolation(
+                    constraint_id = "S1",
+                    constraint_name = "AM/PM balance",
+                    severity = "soft",
+                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: am_heavy). AM < PM despite preference.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Assign more AM sessions to this doctor."
+                ))
+            elif pref == "pm_heavy" and pm < am:
+                violations.append(ConstraintViolation(
+                    constraint_id = "S1",
+                    constraint_name = "AM/PM balance",
+                    severity = "soft",
+                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: pm_heavy). PM < AM despite preference.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Assign more PM sessions to this doctor."
+                ))
+
+    return violations
+
+def check_s2_office_ranking(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    global_office_ranking: List[str]
+) -> List[ConstraintViolation]:
+    """
+    S2: Fill higher-ranked offices before lower-ranked.
+    Each doctor has their own ranked preference list, falling back to global default.
+    Flags if a doctor is assigned to a lower-ranked office on a date where
+    a higher-ranked office has an open slot of the same shift type.
+    """
+    violations = []
+    if not global_office_ranking:
+        return violations
+
+    a_by_slot = {}
+    for a in assignments:
+        a_by_slot.setdefault(a.slot_id, []).append(a.doctor_id)
+
+    for doc in doctors:
+        ranking = doc.office_preferences if doc.office_preferences else global_office_ranking
+
+        doc_assignments = [a for a in assignments if a.doctor_id == doc.id]
+        for a in doc_assignments:
+            slot = slot_map[a.slot_id]
+            if slot.shift_type not in OFFICE_SESSION_TYPES:
+                continue
+
+            assigned_rank = ranking.index(slot.office_id) if slot.office_id in ranking else len(ranking)
+
+            for better_office in ranking:
+                if ranking.index(better_office) >= assigned_rank:
+                    break
+                better_slot_id = f"{slot.date}_{better_office}_{slot.shift_type}"
+                better_slot = slot_map.get(better_slot_id)
+                if not better_slot:
+                    continue
+                better_count = len(a_by_slot.get(better_slot_id, []))
+                if better_count < better_slot.max_doctors:
+                    if doc.allowed_offices is not None and better_office not in doc.allowed_offices:
+                        continue
+                    violations.append(ConstraintViolation(
+                        constraint_id = "S2",
+                        constraint_name = "Office ranking",
+                        severity = "soft",
+                        description = f"Dr. {doc.name} assigned to {slot.office_id} on {slot.date} ({slot.shift_type}) but higher-ranked office {better_office} has available capacity.",
+                        affected_doctors = [doc.id],
+                        affected_dates = [slot.date],
+                        suggestion = f"Consider assigning Dr. {doc.name} to {better_office} instead of {slot.office_id} on this date."
+                    ))
+                    break
+
+    return violations
+
+def check_s3_late_shift_balance(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    year: int,
+    month: int
+) -> List[ConstraintViolation]:
+    """
+    S3: Soft preference for each doctor to have approximately 1 late shift
+    per week when available.
+    """
+    violations = []
+    days = get_days_in_month(year, month)
+    max_week = max(d['week_num'] for d in days) if days else 0
+
+    for doc in doctors:
+        late_by_week = {}
+        for a in assignments:
+            if a.doctor_id != doc.id:
+                continue
+            slot = slot_map[a.slot_id]
+            if slot.shift_type == "office_late":
+                day_info = next((d for d in days if d['date'] == slot.date), None)
+                if day_info:
+                    wn = day_info['week_num']
+                    late_by_week[wn] = late_by_week.get(wn, 0) + 1
+
+        for wn in range(max_week + 1):
+            late_count = late_by_week.get(wn, 0)
+
+            week_dates = [d['date'] for d in days if d['week_num'] == wn]
+            late_slots_in_week = [s for s in slot_map.values()
+                if s.shift_type == "office_late" and s.date in week_dates
+                and (doc.allowed_offices is None or s.office_id in doc.allowed_offices)]
+
+            if len(late_slots_in_week) == 0:
+                continue
+
+            if late_count == 0:
+                violations.append(ConstraintViolation(
+                    constraint_id = "S3",
+                    constraint_name = "Late shift balance",
+                    severity = "soft",
+                    description = f"Dr. {doc.name} has 0 late shifts in week {wn} when late slots are available.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Consider assigning a late shift to this doctor in this week."
+                ))
+
+    return violations
+
+def check_s4_post_call_work_preference(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    offices: List[Office]
+) -> List[ConstraintViolation]:
+    """
+    S4: After a call shift, if a doctor prefers to work, schedule them for
+    the 08:00-12:00 hospital office AM slot. Per-doctor setting.
+    """
+    violations = []
+    hospital_id = next((o.id for o in offices if o.is_hospital), None)
+    if not hospital_id:
+        return violations
+
+    for doc in doctors:
+        if doc.post_call_preference == "no_preference":
+            continue
+
+        doc_assignments = sorted(
+            [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc.id],
+            key=lambda x: (x[0].date, x[0].start_time)
+        )
+
+        for i, (slot, _) in enumerate(doc_assignments):
+            if slot.shift_type not in CALL_SHIFT_TYPES:
+                continue
+
+            next_day = str(dt_class.fromisoformat(slot.date) + timedelta(days=1))
+
+            next_day_assignments = [
+                (s, a) for s, a in doc_assignments[i + 1:]
+                if s.date == next_day and s.shift_type in CLEARING_SHIFT_TYPES
+            ]
+
+            if doc.post_call_preference == "work":
+                has_hosp_am = any(
+                    s.shift_type == "office_am" and s.office_id == hospital_id
+                    for s, _ in next_day_assignments
+                )
+                if next_day_assignments and not has_hosp_am:
+                    violations.append(ConstraintViolation(
+                        constraint_id = "S4",
+                        constraint_name = "Post-call work preference",
+                        severity = "soft",
+                        description = f"Dr. {doc.name} prefers to work after call but has no hospital AM shift on {next_day} after call on {slot.date}.",
+                        affected_doctors = [doc.id],
+                        affected_dates = [next_day],
+                        suggestion = "Assign a hospital office AM shift to this doctor on the day after their call."
+                    ))
+            elif doc.post_call_preference == "off":
+                if next_day_assignments:
+                    violations.append(ConstraintViolation(
+                        constraint_id = "S4",
+                        constraint_name = "Post-call work preference",
+                        severity = "soft",
+                        description = f"Dr. {doc.name} prefers off after call but has assignments on {next_day} after call on {slot.date}.",
+                        affected_doctors = [doc.id],
+                        affected_dates = [next_day],
+                        suggestion = "Remove next-day assignments for this doctor, or change their post_call_preference."
+                    ))
+
+    return violations
+
+def check_s5_call_shift_preference(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    S5: Single-preference doctors never get doubles. Double-preference
+    doctors get paired day+night when balance allows.
+    """
+    violations = []
+    doc_map = {d.id: d for d in doctors}
+
+    by_doc = {}
+    for a in assignments:
+        slot = slot_map[a.slot_id]
+        if slot.shift_type in ("call_day", "call_night"):
+            by_doc.setdefault(a.doctor_id, []).append(slot)
+
+    for doc_id, call_slots in by_doc.items():
+        doc = doc_map.get(doc_id)
+        if not doc or doc.call_shift_preference == "no_preference":
+            continue
+
+        day_by_date = {}
+        night_by_date = {}
+        for s in call_slots:
+            if s.shift_type == "call_day":
+                day_by_date[s.date] = s
+            elif s.shift_type == "call_night":
+                night_by_date[s.date] = s
+
+        double_dates = set(day_by_date.keys()) & set(night_by_date.keys())
+
+        if doc.call_shift_preference == "double" and len(double_dates) == 0:
+            has_weekday_opportunity = False
+            for d in day_by_date:
+                dow = dt_class.fromisoformat(d).weekday()
+                if dow < 4 and d in night_by_date:
+                    pass
+                night_id = f"{d}_{slot_map[a.slot_id].office_id}_call_night" if False else None
+            all_dates = sorted(set(list(day_by_date.keys()) + list(night_by_date.keys())))
+            weekday_dates_with_both = [d for d in all_dates
+                if d in day_by_date and d in night_by_date
+                and dt_class.fromisoformat(d).weekday() < 5]
+            if not weekday_dates_with_both and len(all_dates) > 0:
+                violations.append(ConstraintViolation(
+                    constraint_id = "S5",
+                    constraint_name = "Call shift preference",
+                    severity = "soft",
+                    description = f"Dr. {doc.name} prefers doubles but has no call doubles this month.",
+                    affected_doctors = [doc.id],
+                    affected_dates = [],
+                    suggestion = "Consider assigning this doctor to paired day+night calls when balance allows."
+                ))
+
+    return violations
+
+def check_s6_day_night_preference(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    S6: Within the weekday call balance, prefer to give doctors their
+    day_night_preference when balanced.
+    """
+    violations = []
+    for doc in doctors:
+        if doc.day_night_preference == "balanced":
+            continue
+
+        day_calls = 0
+        night_calls = 0
+        for a in assignments:
+            if a.doctor_id != doc.id:
+                continue
+            slot = slot_map[a.slot_id]
+            if slot.call_balance_group == "weekday_day":
+                day_calls += 1
+            elif slot.call_balance_group == "weekday_night":
+                night_calls += 1
+
+        total = day_calls + night_calls
+        if total == 0:
+            continue
+
+        if doc.day_night_preference == "day" and night_calls > day_calls:
+            violations.append(ConstraintViolation(
+                constraint_id = "S6",
+                constraint_name = "Day/night preference",
+                severity = "soft",
+                description = f"Dr. {doc.name} prefers day calls but has day={day_calls}, night={night_calls} (night > day).",
+                affected_doctors = [doc.id],
+                affected_dates = [],
+                suggestion = "Reassign some night calls to other doctors or give this doctor more day calls."
+            ))
+        elif doc.day_night_preference == "night" and day_calls > night_calls:
+            violations.append(ConstraintViolation(
+                constraint_id = "S6",
+                constraint_name = "Day/night preference",
+                severity = "soft",
+                description = f"Dr. {doc.name} prefers night calls but has day={day_calls}, night={night_calls} (day > night).",
+                affected_doctors = [doc.id],
+                affected_dates = [],
+                suggestion = "Reassign some day calls to other doctors or give this doctor more night calls."
+            ))
+
+    return violations
+
+def check_s7_office_variety(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot],
+    offices: List[Office]
+) -> List[ConstraintViolation]:
+    """
+    S7: Soft preference to spread sessions across as many eligible offices
+    as possible.
+    """
+    violations = []
+    for doc in doctors:
+        offices_used = set()
+        total_sessions = 0
+        for a in assignments:
+            if a.doctor_id != doc.id:
+                continue
+            slot = slot_map[a.slot_id]
+            if slot.shift_type in OFFICE_SESSION_TYPES:
+                offices_used.add(slot.office_id)
+                total_sessions += 1
+
+        if total_sessions < 3:
+            continue
+
+        eligible = set()
+        if doc.allowed_offices is not None:
+            eligible = set(doc.allowed_offices)
+        else:
+            eligible = {o.id for o in offices}
+
+        unused = eligible - offices_used
+        if len(offices_used) < len(eligible) and len(unused) >= 1 and len(offices_used) < 2:
+            violations.append(ConstraintViolation(
+                constraint_id = "S7",
+                constraint_name = "Office variety",
+                severity = "soft",
+                description = f"Dr. {doc.name} uses {len(offices_used)} office(s) but is eligible for {len(eligible)}. Consider spreading sessions.",
+                affected_doctors = [doc.id],
+                affected_dates = [],
+                suggestion = f"Assign Dr. {doc.name} to additional offices: {sorted(unused)}."
+            ))
+
+    return violations
 
 def suggest_relaxations(violations: List[ConstraintViolation]) -> List[str]:
     """
@@ -434,15 +1166,20 @@ def suggest_relaxations(violations: List[ConstraintViolation]) -> List[str]:
 
     Group violations by constraint_id, then produce one suggestion per group.
     Include the count of violations in the suggestion so the user knows severity.
-
-    For H5c and H5d, note that doctor preferences have no influence on those
-    groups — the user should look at blackout/availability settings instead.
     """
     suggestions = []
     by_id: Dict[str, List[ConstraintViolation]] = {}
     for v in violations:
         by_id.setdefault(v.constraint_id, []).append(v)
-    
+
+    if "H2" in by_id:
+        n = len(by_id["H2"])
+        suggestions.append(
+            f"RESTRICTED TUESDAY - {n} violation(s). "
+            f"Capacity exceeded on restricted Tuesdays. "
+            f"Consider increasing restricted_tuesday_max or reducing pre-filled assignments on those dates."
+        )
+
     if "H3" in by_id:
         n = len(by_id["H3"])
         suggestions.append(
@@ -451,18 +1188,26 @@ def suggest_relaxations(violations: List[ConstraintViolation]) -> List[str]:
             f"(2) Set hospital_call_eligible=True for more doctors."
             f"(3) Remove blackout/day-off dates for call-eligible doctors."
         )
-    
+
+    if "H4" in by_id:
+        n = len(by_id["H4"])
+        suggestions.append(
+            f"DOUBLE CALL - {n} violation(s). "
+            f"A single-preference doctor has both call_day and call_night on the same date, "
+            f"or a double exists on a weekend. Change call_shift_preference or reassign."
+        )
+
     for group in ("weekday_day", "weekday_night", "friday_night", "weekend_block"):
         key = f"H5_{group}"
         if key in by_id:
             pref = (" NOTE: doctor preferences have no influence on this group."
-                    if group in ("friday_night", "weekend_block") else "")
+                if group in ("friday_night", "weekend_block") else "")
             suggestions.append(
                 f"CALL BALANCE ({group}){pref}: Balance cannot be achieved. "
-                f"Check blackout dates - if some doctors are unavailable for man "
+                f"Check blackout dates - if some doctors are unavailable for many "
                 f"of this call type, others must cover the imbalance."
             )
-    
+
     if "H6" in by_id:
         suggestions.append(
             "OVERLAP - An overnight shift is conflicting with an adjacent-day assignment. "
@@ -476,5 +1221,37 @@ def suggest_relaxations(violations: List[ConstraintViolation]) -> List[str]:
             "surgical_hosp_pm the same day, same doctor. "
             "Check for blackout dates or capacity conflicts on those days."
         )
-    
+
+    if "H8" in by_id:
+        n = len(by_id["H8"])
+        suggestions.append(
+            f"POST-CALL LOCATION - {n} violation(s). "
+            f"After a call shift, the doctor must do a hospital office shift before "
+            f"going to a non-hospital office. Insert a hospital office AM or PM shift."
+        )
+
+    if "H11" in by_id:
+        n = len(by_id["H11"])
+        suggestions.append(
+            f"LOCKED ASSIGNMENT - {n} missing. "
+            f"A pre-scheduled assignment was removed by the solver. "
+            f"Check that locked assignments are passed correctly and not overridden."
+        )
+
+    if "H12" in by_id:
+        n = len(by_id["H12"])
+        suggestions.append(
+            f"SESSION QUOTA - {n} violation(s). "
+            f"A doctor has fewer sessions than required_sessions_per_week. "
+            f"Reduce day-offs, increase office capacity, or lower required_sessions_per_week."
+        )
+
+    if "H13" in by_id:
+        n = len(by_id["H13"])
+        suggestions.append(
+            f"LATE SHIFT DISTINCTNESS - {n} violation(s). "
+            f"office_late slot exists without a paired office_pm. "
+            f"Check slot_generator logic."
+        )
+
     return suggestions
