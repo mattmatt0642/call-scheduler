@@ -10,100 +10,168 @@ let wizardStep = 1;
 // ── Wizard ──────────────────────────────────────────────────────────────────
 
 function showWizardStep(step) {
-    wizardStep = step;
-    // Ensure we're on the setup tab first
-    const setupPane = document.getElementById('tab-setup');
-    if (setupPane && !setupPane.classList.contains('active')) {
-        switchTab('setup');
-    }
-    document.querySelectorAll('.wizard-step').forEach(ws => ws.classList.add('hidden'));
-    const target = document.getElementById('wstep-' + step);
-    if (target) target.classList.remove('hidden');
+  wizardStep = step;
+  const setupPane = document.getElementById('tab-setup');
+  if (setupPane && !setupPane.classList.contains('active')) {
+    switchTab('setup');
+  }
+  document.querySelectorAll('.wizard-step').forEach(ws => ws.classList.add('hidden'));
+  const target = document.getElementById('wstep-' + step);
+  if (target) target.classList.remove('hidden');
 
-    document.querySelectorAll('.step-dot').forEach(dot => {
-        const s = parseInt(dot.dataset.step);
-        dot.classList.remove('active', 'done');
-        dot.textContent = s;
-        if (s === step) dot.classList.add('active');
-        else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
-    });
+  document.querySelectorAll('.step-dot').forEach(dot => {
+    const s = parseInt(dot.dataset.step);
+    dot.classList.remove('active', 'done');
+    dot.textContent = s;
+    if (s === step) dot.classList.add('active');
+    else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
+  });
 
-    if (step === 2) renderWizardDoctors();
-    if (step === 3) renderWizardOffices();
-    if (step === 4) {
-        syncWizardToGenTab();
-        updateWizardSummary();
-    }
+  renderQuickSetupSummary();
+  renderWizardDoctors();
+  renderWizardOffices();
+  updateWizardSummary();
+  if (step === 4) updateBlackoutDoctorSelect();
+  if (step === 4) refreshBlackoutCalendar();
 }
 
 function wizardNext() {
-	if (wizardStep < 4) { showWizardStep(wizardStep + 1); return; }
-	// Step 4 "Next" → go to schedule
-	switchTab('schedule');
+  if (wizardStep < 4) { showWizardStep(wizardStep + 1); return; }
+  showWizSchedulePreview();
 }
 
 function wizardPrev() {
 	if (wizardStep > 1) showWizardStep(wizardStep - 1);
 }
 
-function syncWizardToGenTab() {
-	const yEl = document.getElementById('wiz-year');
-	const mEl = document.getElementById('wiz-month');
-	if (yEl) document.getElementById('gen-year').value = yEl.value;
-	if (mEl) document.getElementById('gen-month').value = mEl.value;
+function showWizSchedulePreview() {
+  const preview = document.getElementById('wiz-schedule-preview');
+  if (!preview) return;
+  preview.classList.remove('hidden');
+  const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
+  const data = STATE.schedules[mk];
+  if (data) {
+    const container = document.getElementById('wiz-calendar-container');
+    if (container) container.innerHTML = buildCalendarHTML(currentScheduleYear, currentScheduleMonth, data);
+    updateWizScheduleDisplay(data);
+  }
+  preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function updateWizScheduleDisplay(data) {
+  const label = document.getElementById('wiz-sched-month-label');
+  const navLabel = document.getElementById('wiz-sched-nav-label');
+  if (label) label.textContent = `${MONTHS[currentScheduleMonth]} ${currentScheduleYear}`;
+  if (navLabel) navLabel.textContent = `${MONTHS[currentScheduleMonth].slice(0, 3)} ${currentScheduleYear}`;
+
+  const statusEl = document.getElementById('wiz-sched-solver-status');
+  const callGiniEl = document.getElementById('wiz-sched-call-gini');
+  const sessGiniEl = document.getElementById('wiz-sched-session-gini');
+
+  if (statusEl) {
+    let statusText = data?.solverStatus || '—';
+    if (statusText === 'optimal') statusText = 'Optimal';
+    else if (statusText === 'not_solved') statusText = 'Not solved';
+    else if (data?.partial) statusText = 'Partial';
+    statusEl.textContent = statusText;
+    statusEl.className = 'stat-val' + (data?.partial ? ' val-warn' : data?.solverStatus === 'optimal' ? ' val-ok' : '');
+  }
+  if (callGiniEl) {
+    const v = data?.giniCalls;
+    callGiniEl.textContent = v != null ? (v <= 0.10 ? 'Fair' : 'Uneven') : '—';
+    callGiniEl.className = 'stat-val' + (v > 0.10 ? ' val-warn' : v != null ? ' val-ok' : '');
+  }
+  if (sessGiniEl) {
+    const v = data?.giniSessions;
+    sessGiniEl.textContent = v != null ? (v <= 0.10 ? 'Fair' : 'Uneven') : '—';
+    sessGiniEl.className = 'stat-val' + (v > 0.10 ? ' val-warn' : v != null ? ' val-ok' : '');
+  }
+}
+
+function changeWizScheduleMonth(delta) {
+  currentScheduleMonth += delta;
+  if (currentScheduleMonth > 11) { currentScheduleMonth = 0; currentScheduleYear++; }
+  if (currentScheduleMonth < 0) { currentScheduleMonth = 11; currentScheduleYear--; }
+  showWizSchedulePreview();
 }
 
 function updateWizardSummary() {
-	const el = document.getElementById('wiz-summary');
-	if (!el) return;
-	const n = STATE.doctors.length;
-	const o = STATE.offices.length;
-	const h = STATE.offices.filter(x => x.isHospital).length;
-	if (n === 0 && o === 0) {
-		el.innerHTML = '<div class="text-muted text-sm">Add doctors and offices to see a summary.</div>';
-		return;
-	}
+  const el = document.getElementById('wiz-summary');
+  if (!el) return;
+  const n = STATE.doctors.length;
+  const o = STATE.offices.length;
+  const h = STATE.offices.filter(x => x.isHospital).length;
+  if (n === 0 && o === 0) {
+    el.innerHTML = '<div class="text-muted text-sm">Add doctors and offices to see a summary.</div>';
+    return;
+  }
   el.innerHTML = `<div class="summary-grid">
   <div class="summary-row">
-  <span class="summary-label">Doctors</span>
-  <span class="summary-value">${n}</span>
+    <span class="summary-label">Doctors</span>
+    <span class="summary-value">${n}</span>
   </div>
   <div class="summary-row">
-  <span class="summary-label">Offices</span>
-  <span class="summary-value">${o} ${h ? '(' + h + ' hospital)' : ''}</span>
+    <span class="summary-label">Offices</span>
+    <span class="summary-value">${o} ${h ? '(' + h + ' hospital)' : ''}</span>
   </div>
   <div class="summary-row">
-  <span class="summary-label">Hospital-call eligible</span>
-  <span class="summary-value">${STATE.doctors.filter(d => d.hospitalCallEligible).length}</span>
+    <span class="summary-label">Hospital-call eligible</span>
+    <span class="summary-value">${STATE.doctors.filter(d => d.hospitalCallEligible).length}</span>
   </div>
   <div class="summary-row">
-  <span class="summary-label">Surgical assist</span>
-  <span class="summary-value">${STATE.doctors.filter(d => d.surgicalAssistEligible).length}</span>
+    <span class="summary-label">Surgical assist</span>
+    <span class="summary-value">${STATE.doctors.filter(d => d.surgicalAssistEligible).length}</span>
   </div>
+</div>`;
+}
+
+function renderQuickSetupSummary() {
+  const el = document.getElementById('quick-setup-content');
+  if (!el) return;
+  const n = STATE.doctors.length;
+  const o = STATE.offices.length;
+  const h = STATE.offices.filter(x => x.isHospital).length;
+
+  const docCountHtml = n > 0
+    ? `<span class="quick-setup-count">${n}</span>`
+    : `<span class="quick-setup-empty">None yet</span>`;
+  const offCountHtml = o > 0
+    ? `<span class="quick-setup-count">${o} ${h ? '(' + h + ' hospital)' : ''}</span>`
+    : `<span class="quick-setup-empty">None yet</span>`;
+
+  el.innerHTML = `
+  <div class="quick-setup-row">
+    <span class="quick-setup-label">Doctors</span>
+    <div class="flex-row">${docCountHtml}<button class="btn btn-sm btn-ghost" onclick="addDoctor()">+ Add</button><button class="btn btn-sm btn-ghost" onclick="showWizardStep(2)">Edit</button></div>
+  </div>
+  <div class="quick-setup-row">
+    <span class="quick-setup-label">Offices</span>
+    <div class="flex-row">${offCountHtml}<button class="btn btn-sm btn-ghost" onclick="addOffice()">+ Add</button><button class="btn btn-sm btn-ghost" onclick="showWizardStep(3)">Edit</button></div>
   </div>`;
 }
 
 // ── Wizard doctor / office lists ────────────────────────────────────────────
 
 function renderWizardDoctors() {
-	const el = document.getElementById('wiz-doctors-list');
-	if (!el) return;
-	if (!STATE.doctors.length) {
-    el.innerHTML = '<div class="empty-msg" style="padding:1.5rem">No doctors yet. Click "Add Doctor" below to get started.</div>';
-		return;
-	}
-  el.innerHTML = STATE.doctors.map((doc, idx) => {
-    const initials = doc.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
-    return `<div class="entity-card">
+  const el = document.getElementById('wiz-doctors-list');
+  if (!el) { console.warn('[renderWizardDoctors] #wiz-doctors-list not found'); return; }
+  let html = '<div class="quick-add"><input type="text" id="quick-add-doctor-name" placeholder="Doctor name" onkeydown="if(event.key===\'Enter\')quickAddDoctor()"/><button class="btn btn-primary btn-sm" onclick="quickAddDoctor()">+ Add Doctor</button></div>';
+  if (!STATE.doctors.length) {
+    html += '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No doctors yet</div><div class="empty-state-desc">Type a name above and click Add Doctor, or press Enter.</div></div>';
+  } else {
+    html += '<div class="entity-list">';
+    html += STATE.doctors.map((doc) => {
+      const initials = doc.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
+      return `<div class="entity-card">
   <div class="avatar">${initials}</div>
   <div class="info">
     <div class="name">${escapeHtml(doc.name)}</div>
     <div class="toggles">
       <label class="toggle-label"><span class="toggle-text">Hospital Call</span>
-        <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
+      <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
       </label>
       <label class="toggle-label"><span class="toggle-text">Surgical</span>
-        <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
+      <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
       </label>
     </div>
   </div>
@@ -112,35 +180,42 @@ function renderWizardDoctors() {
     <button class="btn btn-sm btn-danger" onclick="removeDoctor('${doc.id}')">Remove</button>
   </div>
 </div>`;
-	}).join('');
+    }).join('');
+    html += '</div>';
+  }
+  el.innerHTML = html;
 }
 
 function renderWizardOffices() {
-    const el = document.getElementById('wiz-offices-list');
-    if (!el) return;
-    if (!STATE.offices.length) {
-        el.innerHTML = '<div class="empty-msg" style="padding:1.5rem">No offices yet. Click "Add Office" below to get started.</div>';
-        return;
-    }
-    el.innerHTML = STATE.offices.map(off => {
-        const icon = off.isHospital ? '⌁' : '○';
-        return `<div class="entity-card">
-    <div class="avatar" style="${off.isHospital ? 'background:var(--accent-dim);color:var(--accent)' : ''}">${icon}</div>
-    <div class="info" style="flex:1">
-        <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
-        <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
-            <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
-            <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
-            </label>
-            <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
-            <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
-        </div>
+  const el = document.getElementById('wiz-offices-list');
+  if (!el) { console.warn('[renderWizardOffices] #wiz-offices-list not found'); return; }
+  let html = '<div class="quick-add"><input type="text" id="quick-add-office-name" placeholder="Office name" onkeydown="if(event.key===\'Enter\')quickAddOffice()"/><button class="btn btn-primary btn-sm" onclick="quickAddOffice()">+ Add Office</button></div>';
+  if (!STATE.offices.length) {
+    html += '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No offices yet</div><div class="empty-state-desc">Type a name above and click Add Office. The first office will be marked as the hospital by default.</div></div>';
+  } else {
+    html += '<div class="entity-list">';
+    html += STATE.offices.map(off => {
+      const icon = off.isHospital ? '⌁' : '○';
+      return `<div class="entity-card">
+  <div class="avatar" style="${off.isHospital ? 'background:var(--accent-dim);color:var(--accent)' : ''}">${icon}</div>
+  <div class="info" style="flex:1">
+    <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
+    <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+      <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
+      <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
+      </label>
+      <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
+      <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
     </div>
-    <div class="actions">
-        <button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
-    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
+  </div>
 </div>`;
     }).join('');
+    html += '</div>';
+  }
+  el.innerHTML = html;
 }
 
 // ── Setup (backward compat for old tab IDs) ─────────────────────────────────
@@ -159,32 +234,69 @@ function addDoctor() {
   renderDoctorAccordion();
   updateWizardSummary();
   updateBlackoutDoctorSelect();
+  renderQuickSetupSummary();
+}
+
+function quickAddDoctor() {
+  const input = document.getElementById('quick-add-doctor-name');
+  const name = input ? input.value.trim() : '';
+  const doc = defaultStateDoctor();
+  if (name) doc.name = name;
+  STATE.doctors.push(doc);
+  saveState();
+  renderWizardDoctors();
+  renderDoctorAccordion();
+  updateWizardSummary();
+  updateBlackoutDoctorSelect();
+  renderQuickSetupSummary();
+  const newInput = document.getElementById('quick-add-doctor-name');
+  if (newInput) newInput.focus();
 }
 
 function removeDoctor(id) {
- STATE.doctors = STATE.doctors.filter(d => d.id !== id);
- for (const mk of Object.keys(STATE.blackouts)) {
-  delete STATE.blackouts[mk][id];
-  if (Object.keys(STATE.blackouts[mk]).length === 0) delete STATE.blackouts[mk];
- }
- saveState();
- if (wizardStep === 2) renderWizardDoctors();
- renderDoctorAccordion();
- updateWizardSummary();
- updateBlackoutDoctorSelect();
+  STATE.doctors = STATE.doctors.filter(d => d.id !== id);
+  for (const mk of Object.keys(STATE.blackouts)) {
+    delete STATE.blackouts[mk][id];
+    if (Object.keys(STATE.blackouts[mk]).length === 0) delete STATE.blackouts[mk];
+  }
+  saveState();
+  if (wizardStep === 2) renderWizardDoctors();
+  renderDoctorAccordion();
+  updateWizardSummary();
+  updateBlackoutDoctorSelect();
+  renderQuickSetupSummary();
 }
 
 function addOffice() {
-    const id = 'off_' + generateId().slice(0, 5);
-    STATE.offices.push({
-        id, name: 'Office ' + (STATE.offices.length + 1),
-        isHospital: STATE.offices.length === 0,
-        maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
-    });
-    saveState();
-    console.log('[addOffice] Added:', id, 'Total offices:', STATE.offices.length, 'wizardStep:', wizardStep);
-    renderWizardOffices();
-    updateWizardSummary();
+  const id = 'off_' + generateId().slice(0, 5);
+  STATE.offices.push({
+    id, name: 'Office ' + (STATE.offices.length + 1),
+    isHospital: STATE.offices.length === 0,
+    maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
+  });
+  saveState();
+  console.log('[addOffice] Added:', id, 'Total offices:', STATE.offices.length, 'wizardStep:', wizardStep);
+  renderWizardOffices();
+  updateWizardSummary();
+  renderQuickSetupSummary();
+}
+
+function quickAddOffice() {
+  const input = document.getElementById('quick-add-office-name');
+  const name = input ? input.value.trim() : '';
+  const id = 'off_' + generateId().slice(0, 5);
+  const office = {
+    id, name: name || ('Office ' + (STATE.offices.length + 1)),
+    isHospital: STATE.offices.length === 0,
+    maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
+  };
+  STATE.offices.push(office);
+  saveState();
+  renderWizardOffices();
+  updateWizardSummary();
+  renderQuickSetupSummary();
+  const newInput = document.getElementById('quick-add-office-name');
+  if (newInput) newInput.focus();
 }
 
 function updateOfficeField(officeId, field, value) {
@@ -202,6 +314,7 @@ function removeOffice(id) {
   saveState();
   renderWizardOffices();
   updateWizardSummary();
+  renderQuickSetupSummary();
 }
 
 function openDoctorAccordion(docId) {
@@ -220,28 +333,20 @@ function openDoctorAccordion(docId) {
 // ── Blackout calendars ─────────────────────────────────────────────────────
 
 function updateBlackoutDoctorSelect() {
-	// Wizard step 4
-	const sel = document.getElementById('blackout-doctor-select');
-	if (sel) {
-		sel.innerHTML = STATE.doctors.map(d =>
-			`<option value="${d.id}">${escapeHtml(d.name)}</option>`
-		).join('');
-	}
-	// Generate tab
-	const sel2 = document.getElementById('blackout-doctor-select-gen');
-	if (sel2) {
-		sel2.innerHTML = STATE.doctors.map(d =>
-			`<option value="${d.id}">${escapeHtml(d.name)}</option>`
-		).join('');
-	}
+  const sel = document.getElementById('blackout-doctor-select');
+  if (sel) {
+    sel.innerHTML = STATE.doctors.map(d =>
+      `<option value="${d.id}">${escapeHtml(d.name)}</option>`
+    ).join('');
+  }
 }
 
 function getBlackoutYearMonth() {
- const yEl = document.getElementById('wiz-year');
- const mEl = document.getElementById('wiz-month');
- const year = yEl ? parseInt(yEl.value) : parseInt(document.getElementById('gen-year')?.value || 2026);
- const month = mEl ? parseInt(mEl.value) : parseInt(document.getElementById('gen-month')?.value || 8);
- return { year, month };
+  const yEl = document.getElementById('wiz-year');
+  const mEl = document.getElementById('wiz-month');
+  const year = yEl ? parseInt(yEl.value) : currentScheduleYear || new Date().getFullYear();
+  const month = mEl ? parseInt(mEl.value) : currentScheduleMonth || new Date().getMonth();
+  return { year, month };
 }
 
 // ── Generate (wizard step 4) ────────────────────────────────────────────────
@@ -306,94 +411,22 @@ async function handleGenerate() {
 			panel?.classList.remove('hidden');
 		}
 
-	switchTab('schedule');
-	updateCalendarView();
-	updateBalanceTable();
-	updateDataStatus();
-} catch (err) {
-	const msg = err.message || String(err);
-	const isNetworkErr = msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Network request');
-	if (isNetworkErr) {
-		statusEl.innerHTML = `<span class="err">Cannot reach the backend server at ${API_BASE}. Start the backend with: cd backend && PYTHONPATH=. python3 app.py</span>`;
-	} else {
-		statusEl.innerHTML = `<span class="err">Error: ${escapeHtml(msg)}</span>`;
-	}
-	console.error(err);
-} finally {
-	if (btn) btn.disabled = false;
-}
-}
-
-// ── Generate (dedicated tab) ─────────────────────────────────────────────────
-
-async function handleGenerateGenTab() {
-    const year = parseInt(document.getElementById('gen-year')?.value || 2026);
-    const month = parseInt(document.getElementById('gen-month')?.value || 8);
-    const timeout = STATE.settings.solverTimeLimitSeconds || 900;
-  const statusEl = document.getElementById('gen-status-2');
-  const btn = document.getElementById('btn-generate-2');
-
-	if (!STATE.doctors.length || !STATE.offices.length) {
-		statusEl.innerHTML = '<span class="err">Add at least one doctor and one office first.</span>';
-		return;
-	}
-
-	const eligibilityErr = validateCallEligibility();
-	if (eligibilityErr) {
-		statusEl.innerHTML = `<span class="err">${eligibilityErr}</span>`;
-		return;
-	}
-
-	statusEl.innerHTML = '<span class="gen-loading"><span class="spinner"></span> Generating schedule…</span>';
-	if (btn) btn.disabled = true;
-	const panel = document.getElementById('conflict-panel-2');
-	const list = document.getElementById('conflict-list-2');
-	panel?.classList.add('hidden');
-
-  try {
-    STATE.settings.solverTimeLimitSeconds = timeout;
-    const result = await apiGenerate(year, month);
-    console.log('[handleGenerateGenTab] API result:', result?.solverStatus, 'assignments:', result?.assignments?.length, 'slots:', result?.slots?.length);
-    if (!result || !result.assignments) {
-      throw new Error('Invalid response from server — no assignments returned');
+    updateCalendarView();
+    showWizSchedulePreview();
+    updateBalanceTable();
+    updateDataStatus();
+  } catch (err) {
+    const msg = err.message || String(err);
+    const isNetworkErr = msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Network request');
+    if (isNetworkErr) {
+      statusEl.innerHTML = `<span class="err">Cannot reach the backend server at ${API_BASE}. Start the backend with: cd backend && PYTHONPATH=. python3 app.py</span>`;
+    } else {
+      statusEl.innerHTML = `<span class="err">Error: ${escapeHtml(msg)}</span>`;
     }
-    const mk = getMonthKey(year, month);
-		STATE.schedules[mk] = result;
-		updateTotalsFromSchedule(result);
-		saveState();
-
-		currentScheduleYear = year;
-		currentScheduleMonth = month;
-
-		statusEl.innerHTML = result.partial
-    ? `<span class="err">Schedule created with ${result.unmetConstraints?.length || 0} issues. Review below.</span>`
-    : '<span class="ok">&#10003; Schedule generated successfully!</span>';
-
-		if (result.partial && result.unmetConstraints?.length) {
-			if (list) {
-				list.innerHTML = result.unmetConstraints.map(c =>
-					`<li><strong>${escapeHtml(c.id || c.name || 'Constraint')}</strong>: ${escapeHtml(c.description || '')} → ${escapeHtml(c.suggestion || '')}</li>`
-				).join('');
-			}
-			panel?.classList.remove('hidden');
-		}
-
-	switchTab('schedule');
-	updateCalendarView();
-	updateBalanceTable();
-	updateDataStatus();
-} catch (err) {
-	const msg = err.message || String(err);
-	const isNetworkErr = msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Network request');
-	if (isNetworkErr) {
-		statusEl.innerHTML = `<span class="err">Cannot reach the backend server at ${API_BASE}. Start the backend with: cd backend && PYTHONPATH=. python3 app.py</span>`;
-	} else {
-		statusEl.innerHTML = `<span class="err">Error: ${escapeHtml(msg)}</span>`;
-	}
-	console.error(err);
-} finally {
-	if (btn) btn.disabled = false;
-}
+    console.error(err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Schedule view ───────────────────────────────────────────────────────────
@@ -733,11 +766,10 @@ function switchTab(tabName) {
 	document.querySelectorAll('.tab-pane').forEach(pane =>
 		pane.classList.toggle('active', pane.id === 'tab-' + tabName)
 	);
- if (tabName === 'setup') { showWizardStep(wizardStep); refreshBlackoutCalendar(); }
- if (tabName === 'doctors') renderDoctorAccordion();
- if (tabName === 'generate') refreshBlackoutCalendar();
- if (tabName === 'schedule') { updateScheduleControls(); updateCalendarView(); }
-	if (tabName === 'balance') updateBalanceTable();
+  if (tabName === 'setup') { showWizardStep(wizardStep); refreshBlackoutCalendar(); }
+  if (tabName === 'doctors') renderDoctorAccordion();
+  if (tabName === 'schedule') { updateScheduleControls(); updateCalendarView(); }
+  if (tabName === 'balance') updateBalanceTable();
 }
 
 function updateDataStatus() {
@@ -757,36 +789,34 @@ function escapeHtml(text) {
 function refreshUI() {
     const activeTab = document.querySelector('.tab-btn.active');
     const tabName = activeTab ? activeTab.dataset.tab : 'setup';
-    if (tabName === 'setup') {
-        showWizardStep(wizardStep);
-        refreshBlackoutCalendar();
-    } else if (tabName === 'doctors') {
-        renderDoctorAccordion();
-    } else if (tabName === 'schedule') {
-        updateScheduleControls();
-        updateCalendarView();
-    } else if (tabName === 'balance') {
-        updateBalanceTable();
-    } else if (tabName === 'generate') {
-        refreshBlackoutCalendar();
-    }
-    updateDataStatus();
-    updateWizardSummary();
+  if (tabName === 'setup') {
+    showWizardStep(wizardStep);
+    refreshBlackoutCalendar();
+  } else if (tabName === 'doctors') {
+    renderDoctorAccordion();
+  } else if (tabName === 'schedule') {
+    updateScheduleControls();
+    updateCalendarView();
+  } else if (tabName === 'balance') {
+    updateBalanceTable();
+  }
+  updateDataStatus();
+  updateWizardSummary();
+  renderQuickSetupSummary();
 }
 
 // ── Event listeners ─────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   const wizYear = document.getElementById('wiz-year');
-  const genYear = document.getElementById('gen-year');
   if (wizYear && !wizYear.value) wizYear.value = new Date().getFullYear();
-  if (genYear && !genYear.value) genYear.value = new Date().getFullYear();
   showWizardStep(wizardStep);
   updateBlackoutDoctorSelect();
   refreshBlackoutCalendar();
   updateBalanceTable();
   updateScheduleControls();
   updateWizardSummary();
+  renderQuickSetupSummary();
 
   // Tab nav
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -801,11 +831,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-	// Wizard step 4 blackout select
-	document.getElementById('blackout-doctor-select')?.addEventListener('change', refreshBlackoutCalendar);
-
-	// Generate tab blackout select
-	document.getElementById('blackout-doctor-select-gen')?.addEventListener('change', refreshBlackoutCalendar);
+  // Wizard step 4 blackout select
+  document.getElementById('blackout-doctor-select')?.addEventListener('change', refreshBlackoutCalendar);
 
 	// Wizard file imports
 	document.getElementById('import-doctors-file')?.addEventListener('change', function() {

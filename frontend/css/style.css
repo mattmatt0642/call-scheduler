@@ -118,12 +118,17 @@ main {
 .tab-pane { display: none; }
 .tab-pane.active { display: block; }
 .page { max-width: 960px; margin: 0 auto; }
-#tab-schedule { display: flex; flex-direction: column; }
+#tab-schedule { display: none; flex-direction: column; }
 #tab-schedule.active { display: flex; }
 #tab-schedule .page { max-width: none; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #tab-schedule #calendar-container { flex: 1; min-height: 0; overflow: hidden; }
 #tab-schedule .schedule-sheet { display: flex; flex-direction: column; height: 100%; max-height: calc(100vh - 160px); }
 #tab-schedule .schedule-sheet .sheet-table { flex: 1; overflow-y: auto; }
+
+.wiz-schedule-preview { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+.wiz-schedule-preview .sched-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.wiz-schedule-preview .sched-stats { display: flex; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.wiz-schedule-preview .schedule-sheet { max-height: 60vh; overflow: auto; }
 
 /* ---- Buttons ---- */
 .btn {
@@ -157,11 +162,16 @@ main {
 
 /* ---- Cards ---- */
 .card {
- background: var(--bg-secondary);
- border: 1px solid var(--border);
- border-radius: var(--radius);
- overflow: hidden;
- box-shadow: var(--shadow);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: visible;
+  box-shadow: var(--shadow);
+}
+#wiz-doctors-list,
+#wiz-offices-list {
+  min-height: 120px;
+  overflow: visible;
 }
 .card-header {
  display: flex;
@@ -452,6 +462,9 @@ font-size: 0.72rem;
 }
 .sheet-table tr:hover td { background: var(--bg-hover) !important; }
 .sheet-table tr:hover td:first-child { background: var(--bg-active) !important; }
+.sheet-table .weekend-col { opacity: 0.55; }
+.sheet-table tbody.week-separator tr:first-child td { border-top: 2px solid var(--text-muted); }
+.sheet-table .week-date-header td { font-size: 0.65rem; color: var(--text-muted); text-align: center; padding: 0.15rem 0.4rem; }
 
 /* Summary table */
 .summary-table th { font-size: 0.72rem; }
@@ -507,6 +520,50 @@ margin: 1px 0;
 }
 .month-nav button { width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 1rem; }
 .month-nav span { font-size: 0.9rem; font-weight: 600; min-width: 110px; text-align: center; color: var(--text-heading); }
+
+/* ---- Quick Setup Summary (wizard step 1) ---- */
+.quick-setup {
+  margin-top: 1rem;
+  padding: 0.85rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.quick-setup-heading {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.65rem;
+}
+.quick-setup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.quick-setup-row:last-child {
+  border-bottom: none;
+}
+.quick-setup-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.quick-setup-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-heading);
+  margin-right: 0.5rem;
+}
+.quick-setup-empty {
+  font-size: 0.82rem;
+  color: var(--accent-orange);
+  font-weight: 500;
+  margin-right: 0.5rem;
+}
 
 /* ---- Balance Table ---- */
 .balance-sheet {
@@ -1178,8 +1235,8 @@ cursor: pointer;
  margin-bottom: 0.85rem;
 }
 .wizard-step {
- max-width: 560px;
- margin: 0 auto;
+  max-width: 560px;
+  margin: 0 auto;
 }
 .wizard-nav {
  display: flex;
@@ -1371,14 +1428,64 @@ cursor: pointer;
 .gen-status .err, .gen-status-area .err { color: var(--accent-red); font-weight: 600; }
 .gen-status .info, .gen-status-area .info { color: var(--accent-blue); }
 .empty-msg {
- padding: 1.5rem;
- text-align: center;
- color: var(--text-muted);
- font-size: 0.88rem;
- background: var(--bg-tertiary);
- border-radius: var(--radius);
- border: 1px dashed var(--border);
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  border: 1px dashed var(--border);
 }
+
+/* ---- Quick-Add Form (wizard steps 2/3) ---- */
+.quick-add {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.quick-add input {
+  flex: 1;
+  min-width: 0;
+}
+.quick-add .btn-primary {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* ---- Prominent Empty State (wizard lists) ---- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+.empty-state-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-blue-light);
+  color: var(--accent-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  font-weight: 300;
+}
+.empty-state-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-heading);
+}
+.empty-state-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  max-width: 280px;
+}
+
 .file-btn { cursor: pointer; }
 
 /* ---- CSS classes to replace inline styles ---- */

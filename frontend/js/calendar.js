@@ -3,119 +3,150 @@ Calendar → Spreadsheet View
 ========================= */
 
 function buildCalendarHTML(year, month, scheduleData) {
-	const DAYS_IN_MONTH = new Date(year, month + 1, 0).getDate();
-	const FIRST_DOW = (new Date(year, month, 1).getDay() + 6) % 7;
-	const MONTH_NAME = new Date(year, month, 1).toLocaleString('default', { month: 'long' });
-	const MONTH_STR = String(month + 1).padStart(2, '0');
-	const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const DAYS_IN_MONTH = new Date(year, month + 1, 0).getDate();
+  const FIRST_DOW = (new Date(year, month, 1).getDay() + 6) % 7;
+  const MONTH_STR = String(month + 1).padStart(2, '0');
+  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-	console.log('[buildCalendarHTML]', year, month, 'slots:', scheduleData?.slots?.length, 'assignments:', scheduleData?.assignments?.length);
+  console.log('[buildCalendarHTML]', year, month, 'slots:', scheduleData?.slots?.length, 'assignments:', scheduleData?.assignments?.length);
 
-	const slotMap = {};
-	const assignMap = {};
-	if (scheduleData) {
-		for (const s of (scheduleData.slots || [])) slotMap[s.slotId] = s;
-		for (const a of (scheduleData.assignments || [])) {
-			if (!assignMap[a.slotId]) assignMap[a.slotId] = [];
-			assignMap[a.slotId].push(a);
-		}
-	}
+  const slotMap = {};
+  const assignMap = {};
+  if (scheduleData) {
+    for (const s of (scheduleData.slots || [])) slotMap[s.slotId] = s;
+    for (const a of (scheduleData.assignments || [])) {
+      if (!assignMap[a.slotId]) assignMap[a.slotId] = [];
+      assignMap[a.slotId].push(a);
+    }
+  }
 
-	const nonHosp = [...new Set((scheduleData?.slots || [])
-		.filter(s => !s.isHospital && s.officeId)
-		.map(s => s.officeId))]
-		.map(id => ({ id, name: STATE.offices.find(o => o.id === id)?.name || id }));
+  const nonHosp = [...new Set((scheduleData?.slots || [])
+    .filter(s => !s.isHospital && s.officeId)
+    .map(s => s.officeId))]
+    .map(id => ({ id, name: STATE.offices.find(o => o.id === id)?.name || id }));
 
-	const hospId = [...new Set((scheduleData?.slots || [])
-		.filter(s => s.isHospital)
-		.map(s => s.officeId))][0] || null;
+  const hospId = [...new Set((scheduleData?.slots || [])
+    .filter(s => s.isHospital)
+    .map(s => s.officeId))][0] || null;
 
-	const hospName = hospId ? (STATE.offices.find(o => o.id === hospId)?.name || 'Hosp') : null;
+  const hospName = hospId ? (STATE.offices.find(o => o.id === hospId)?.name || 'Hosp') : null;
 
-	const callCols = [
-	{ key: 'call_day', label: 'Call Day', width: '85px' },
-	{ key: 'call_night', label: 'Call Night', width: '85px' },
-	{ key: 'call_weekend', label: 'Wknd Sat', width: '85px' },
-	{ key: 'call_weekend_sun', label: 'Wknd Sun', width: '85px' },
-	{ key: 'surgical_am', label: 'Surg AM', width: '78px' },
-	{ key: 'surgical_hosp_pm', label: 'Surg PM', width: '78px' },
-	];
+  const shiftRows = [
+    { key: 'call_day', label: 'Call Day' },
+    { key: 'call_night', label: 'Call Night' },
+    { key: 'call_weekend', label: 'Wknd Sat' },
+    { key: 'call_weekend_sun', label: 'Wknd Sun' },
+    { key: 'surgical_am', label: 'Surg AM' },
+    { key: 'surgical_hosp_pm', label: 'Surg PM' },
+  ];
+  if (hospId) {
+    shiftRows.push({ key: `${hospId}_am`, label: `${hospName} AM` });
+    shiftRows.push({ key: `${hospId}_pm`, label: `${hospName} PM` });
+  }
+  for (const o of nonHosp) {
+    shiftRows.push({ key: `${o.id}_am`, label: `${o.name} AM` });
+    shiftRows.push({ key: `${o.id}_pm`, label: `${o.name} PM` });
+    shiftRows.push({ key: `${o.id}_late`, label: `${o.name} Late` });
+  }
 
-	const officeCols = nonHosp.flatMap(o => [
-		{ key: `${o.id}_am`, label: `${o.name} AM`, width: '70px' },
-		{ key: `${o.id}_pm`, label: `${o.name} PM`, width: '70px' },
-		{ key: `${o.id}_late`, label: `${o.name} Late`, width: '70px' },
-	]);
+  const dayData = {};
+  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+    dayData[d] = { dateStr: `${year}-${MONTH_STR}-${String(d).padStart(2, '0')}`, slots: {} };
+  }
 
-	const hospCols = hospId ? [
-		{ key: `${hospId}_am`, label: `${hospName} AM`, width: '70px' },
-		{ key: `${hospId}_pm`, label: `${hospName} PM`, width: '70px' },
-	] : [];
+  if (scheduleData?.slots) {
+    for (const slot of scheduleData.slots) {
+      const dayNum = parseInt(slot.date.split('-')[2], 10);
+      if (!dayData[dayNum]) continue;
+      const assigned = assignMap[slot.slotId];
+      if (!assigned || !assigned.length) continue;
+      const docName = assigned.map(a => getDoctorLastName(a.doctorId)).filter(Boolean).join(', ');
+      if (!docName) continue;
 
-	const allCols = [...callCols, ...officeCols, ...hospCols];
+      const chip = getChipClass(slot);
 
-	const dayData = {};
-	for (let d = 1; d <= DAYS_IN_MONTH; d++) {
-		dayData[d] = { dateStr: `${year}-${MONTH_STR}-${String(d).padStart(2, '0')}`, slots: {} };
-	}
+      if (['call_day', 'call_night', 'call_weekend', 'call_weekend_sun'].includes(slot.shiftType)) {
+        dayData[dayNum].slots[slot.shiftType] = { doc: docName, chip };
+      }
+      else if (slot.shiftType === 'surgical_am') {
+        dayData[dayNum].slots['surgical_am'] = { doc: docName, chip };
+      }
+      else if (slot.shiftType === 'surgical_hosp_pm') {
+        dayData[dayNum].slots['surgical_hosp_pm'] = { doc: docName, chip };
+      }
+      else if (['office_am', 'office_pm', 'office_late'].includes(slot.shiftType)) {
+        const suffix = slot.shiftType.replace('office_', '');
+        dayData[dayNum].slots[`${slot.officeId}_${suffix}`] = { doc: docName, chip };
+      }
+    }
+  }
 
-	if (scheduleData?.slots) {
-		for (const slot of scheduleData.slots) {
-			const dayNum = parseInt(slot.date.split('-')[2], 10);
-			if (!dayData[dayNum]) continue;
-			const assigned = assignMap[slot.slotId];
-			if (!assigned || !assigned.length) continue;
-			const docName = assigned.map(a => getDoctorLastName(a.doctorId)).filter(Boolean).join(', ');
-			if (!docName) continue;
+  const weeks = [];
+  let currentWeek = [];
+  for (let i = 0; i < FIRST_DOW; i++) currentWeek.push(null);
+  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
+    currentWeek.push(d);
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+  }
+  if (currentWeek.length > 0) {
+    while (currentWeek.length < 7) currentWeek.push(null);
+    weeks.push(currentWeek);
+  }
 
-			const chip = getChipClass(slot);
+  let html = `<div class="schedule-sheet"><table class="sheet-table">`;
+  html += '<thead><tr><th>Shift</th>';
+  for (let col = 0; col < 7; col++) {
+    const cls = col >= 5 ? ' class="weekend-col"' : '';
+    html += `<th${cls}>${DAY_NAMES[col]}</th>`;
+  }
+  html += '</tr></thead>';
 
-			if (['call_day', 'call_night', 'call_weekend', 'call_weekend_sun'].includes(slot.shiftType)) {
-				dayData[dayNum].slots[slot.shiftType] = { doc: docName, chip };
-			}
-			else if (slot.shiftType === 'surgical_am') {
-				dayData[dayNum].slots['surgical_am'] = { doc: docName, chip };
-			}
-			else if (slot.shiftType === 'surgical_hosp_pm') {
-				dayData[dayNum].slots['surgical_hosp_pm'] = { doc: docName, chip };
-			}
-			else if (['office_am', 'office_pm', 'office_late'].includes(slot.shiftType)) {
-				const suffix = slot.shiftType.replace('office_', '');
-				dayData[dayNum].slots[`${slot.officeId}_${suffix}`] = { doc: docName, chip };
-			}
-		}
-	}
+  for (let wi = 0; wi < weeks.length; wi++) {
+    const week = weeks[wi];
+    const sepCls = wi > 0 ? ' week-separator' : '';
 
-let html = `<div class="schedule-sheet">
-<table class="sheet-table">
-		<thead><tr><th>Date</th>`;
-	for (const col of allCols) {
-		html += `<th style="min-width:${col.width}">${col.label}</th>`;
-	}
-html += '</tr></thead><tbody>';
+    html += `<tbody class="week-group${sepCls}">`;
 
-for (let d = 1; d <= DAYS_IN_MONTH; d++) {
-		const dow = (FIRST_DOW + d - 1) % 7;
-		const isWeekend = dow >= 5;
-		const { slots, dateStr } = dayData[d];
-		html += `<tr${isWeekend ? ' style="opacity:0.55"' : ''}>`;
-		html += `<td>${DAY_NAMES[dow]} ${d}<br><span style="font-size:0.65rem;color:var(--text-muted)">${dateStr}</span></td>`;
-		for (const col of allCols) {
-			const cell = slots[col.key];
-			if (cell) {
-				html += `<td><div class="chip ${cell.chip}">${cell.doc}</div></td>`;
-			} else {
-				html += `<td><span class="chip chip-empty">—</span></td>`;
-			}
-		}
-		html += '</tr>';
-	}
-	html += '</tbody></table></div>';
+    html += '<tr class="week-date-header">';
+    html += '<td></td>';
+    for (let col = 0; col < 7; col++) {
+      const dayNum = week[col];
+      const wkendCls = col >= 5 ? ' weekend-col' : '';
+      if (dayNum) {
+        html += `<td class="${wkendCls}" style="font-size:0.65rem;color:var(--text-muted);text-align:center;padding:0.15rem 0.4rem;">${dayNum}</td>`;
+      } else {
+        html += `<td class="${wkendCls}" style="font-size:0.65rem;color:var(--text-muted);text-align:center;padding:0.15rem 0.4rem;"></td>`;
+      }
+    }
+    html += '</tr>';
 
-setTimeout(() => {
-}, 0);
+    for (const row of shiftRows) {
+      html += '<tr>';
+      html += `<td>${row.label}</td>`;
+      for (let col = 0; col < 7; col++) {
+        const dayNum = week[col];
+        const wkendCls = col >= 5 ? ' weekend-col' : '';
+        if (!dayNum) {
+          html += `<td class="${wkendCls}"></td>`;
+          continue;
+        }
+        const cell = dayData[dayNum].slots[row.key];
+        if (cell) {
+          html += `<td class="${wkendCls}"><div class="chip ${cell.chip}">${cell.doc}</div></td>`;
+        } else {
+          html += `<td class="${wkendCls}"><span class="chip chip-empty">\u2014</span></td>`;
+        }
+      }
+      html += '</tr>';
+    }
+    html += '</tbody>';
+  }
 
-return html;
+  html += '</table></div>';
+  return html;
 }
 
 function getChipClass(slot) {
@@ -325,7 +356,7 @@ function handleBlackoutCellClick(doctorId, dateStr, cellEl, event) {
  }
 
  const rect = cellEl.getBoundingClientRect();
- const portal = document.getElementById('blackout-portal') || document.getElementById('blackout-portal-gen') || document.body;
+  const portal = document.getElementById('blackout-portal') || document.body;
  const portalRect = portal === document.body ? { top: 0, left: 0 } : portal.getBoundingClientRect();
  portal.style.position = 'relative';
  popup.style.position = 'absolute';
@@ -395,26 +426,17 @@ function getMonthKeyFromStr(dateStr) {
 }
 
 function refreshBlackoutCalendar() {
- closePeriodPopup();
- const { year, month } = getBlackoutYearMonth();
+  closePeriodPopup();
+  const { year, month } = getBlackoutYearMonth();
 
- const cal = document.getElementById('blackout-calendar');
- const sel = document.getElementById('blackout-doctor-select');
- const doctorId = sel?.value;
- if (cal && doctorId) {
-  cal.innerHTML = buildBlackoutGridHTML(year, month, doctorId);
-  const entriesEl = document.getElementById('blackout-entries');
-  if (entriesEl) entriesEl.innerHTML = buildTimeOffEntriesHTML(year, month, doctorId);
- }
-
- const cal2 = document.getElementById('blackout-calendar-gen');
- const sel2 = document.getElementById('blackout-doctor-select-gen');
- const doctorId2 = sel2?.value;
- if (cal2 && doctorId2) {
-  cal2.innerHTML = buildBlackoutGridHTML(year, month, doctorId2);
-  const entriesEl2 = document.getElementById('blackout-entries-gen');
-  if (entriesEl2) entriesEl2.innerHTML = buildTimeOffEntriesHTML(year, month, doctorId2);
- }
+  const cal = document.getElementById('blackout-calendar');
+  const sel = document.getElementById('blackout-doctor-select');
+  const doctorId = sel?.value;
+  if (cal && doctorId) {
+    cal.innerHTML = buildBlackoutGridHTML(year, month, doctorId);
+    const entriesEl = document.getElementById('blackout-entries');
+    if (entriesEl) entriesEl.innerHTML = buildTimeOffEntriesHTML(year, month, doctorId);
+  }
 }
 
 document.addEventListener('click', function(e) {
