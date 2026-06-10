@@ -19,18 +19,20 @@ function showWizardStep(step) {
   const target = document.getElementById('wstep-' + step);
   if (target) target.classList.remove('hidden');
 
-  document.querySelectorAll('.step-dot').forEach(dot => {
-    const s = parseInt(dot.dataset.step);
+  document.querySelectorAll('.step-item').forEach(item => {
+    const s = parseInt(item.dataset.step);
+    const dot = item.querySelector('.step-dot');
+    if (!dot) return;
     dot.classList.remove('active', 'done');
     dot.textContent = s;
     if (s === step) dot.classList.add('active');
     else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
   });
 
-  renderQuickSetupSummary();
-  renderWizardDoctors();
-  renderWizardOffices();
-  updateWizardSummary();
+  try { renderQuickSetupSummary(); } catch(e) { console.error('[showWizardStep] renderQuickSetupSummary error:', e); }
+  try { renderWizardDoctors(); } catch(e) { console.error('[showWizardStep] renderWizardDoctors error:', e); }
+  try { renderWizardOffices(); } catch(e) { console.error('[showWizardStep] renderWizardOffices error:', e); }
+  try { updateWizardSummary(); } catch(e) { console.error('[showWizardStep] updateWizardSummary error:', e); }
   if (step === 4) updateBlackoutDoctorSelect();
   if (step === 4) refreshBlackoutCalendar();
 }
@@ -155,67 +157,65 @@ function renderQuickSetupSummary() {
 function renderWizardDoctors() {
   const el = document.getElementById('wiz-doctors-list');
   if (!el) { console.warn('[renderWizardDoctors] #wiz-doctors-list not found'); return; }
-  let html = '<div class="quick-add"><input type="text" id="quick-add-doctor-name" placeholder="Doctor name" onkeydown="if(event.key===\'Enter\')quickAddDoctor()"/><button class="btn btn-primary btn-sm" onclick="quickAddDoctor()">+ Add Doctor</button></div>';
   if (!STATE.doctors.length) {
-    html += '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No doctors yet</div><div class="empty-state-desc">Type a name above and click Add Doctor, or press Enter.</div></div>';
+    el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No doctors yet</div><div class="empty-state-desc">Type a name above and click Add Doctor, or press Enter.</div></div>';
   } else {
-    html += '<div class="entity-list">';
+    let html = '<div class="entity-list">';
     html += STATE.doctors.map((doc) => {
       const initials = doc.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
       return `<div class="entity-card">
   <div class="avatar">${initials}</div>
   <div class="info">
-    <div class="name">${escapeHtml(doc.name)}</div>
-    <div class="toggles">
-      <label class="toggle-label"><span class="toggle-text">Hospital Call</span>
-      <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
-      </label>
-      <label class="toggle-label"><span class="toggle-text">Surgical</span>
-      <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
-      </label>
-    </div>
+  <div class="name">${escapeHtml(doc.name)}</div>
+  <div class="toggles">
+  <label class="toggle-label"><span class="toggle-text">Hospital Call</span>
+  <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
+  </label>
+  <label class="toggle-label"><span class="toggle-text">Surgical</span>
+  <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
+  </label>
+  </div>
   </div>
   <div class="actions">
-    <button class="btn btn-sm btn-ghost" onclick="switchTab('doctors'); setTimeout(() => openDoctorAccordion('${doc.id}'), 80)">Edit</button>
-    <button class="btn btn-sm btn-danger" onclick="removeDoctor('${doc.id}')">Remove</button>
+  <button class="btn btn-sm btn-ghost" onclick="switchTab('doctors'); setTimeout(() => openDoctorAccordion('${doc.id}'), 80)">Edit</button>
+  <button class="btn btn-sm btn-danger" onclick="removeDoctor('${doc.id}')">Remove</button>
   </div>
-</div>`;
+  </div>`;
     }).join('');
     html += '</div>';
+    el.innerHTML = html;
   }
-  el.innerHTML = html;
 }
 
 function renderWizardOffices() {
   const el = document.getElementById('wiz-offices-list');
   if (!el) { console.warn('[renderWizardOffices] #wiz-offices-list not found'); return; }
-  let html = '<div class="quick-add"><input type="text" id="quick-add-office-name" placeholder="Office name" onkeydown="if(event.key===\'Enter\')quickAddOffice()"/><button class="btn btn-primary btn-sm" onclick="quickAddOffice()">+ Add Office</button></div>';
   if (!STATE.offices.length) {
-    html += '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No offices yet</div><div class="empty-state-desc">Type a name above and click Add Office. The first office will be marked as the hospital by default.</div></div>';
+    el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No offices yet</div><div class="empty-state-desc">Type a name above and click Add Office. The first office will be marked as the hospital by default.</div></div>';
   } else {
-    html += '<div class="entity-list">';
+    let html = '<div class="entity-list">';
     html += STATE.offices.map(off => {
       const icon = off.isHospital ? '⌁' : '○';
       return `<div class="entity-card">
-  <div class="avatar" style="${off.isHospital ? 'background:var(--accent-dim);color:var(--accent)' : ''}">${icon}</div>
+  <div class="avatar" style="${off.isHospital ? 'background:var(--accent-blue-light);color:var(--accent-blue)' : ''}">${icon}</div>
   <div class="info" style="flex:1">
-    <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
-    <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
-      <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
-      <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
-      </label>
-      <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
-      <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
-    </div>
+  <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
+  <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
+  <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
+  <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
+  </label>
+  <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
+  <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
+  </div>
   </div>
   <div class="actions">
-    <button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
+  <button class="btn btn-sm btn-danger" onclick="removeOffice('${off.id}')">Remove</button>
   </div>
-</div>`;
+  </div>`;
     }).join('');
     html += '</div>';
+    el.innerHTML = html;
   }
-  el.innerHTML = html;
 }
 
 // ── Setup (backward compat for old tab IDs) ─────────────────────────────────
@@ -230,7 +230,7 @@ function renderSetup() {
 function addDoctor() {
   STATE.doctors.push(defaultStateDoctor());
   saveState();
-  if (wizardStep === 2) renderWizardDoctors();
+  renderWizardDoctors();
   renderDoctorAccordion();
   updateWizardSummary();
   updateBlackoutDoctorSelect();
@@ -240,8 +240,9 @@ function addDoctor() {
 function quickAddDoctor() {
   const input = document.getElementById('quick-add-doctor-name');
   const name = input ? input.value.trim() : '';
+  if (!name) { if (input) input.focus(); return; }
   const doc = defaultStateDoctor();
-  if (name) doc.name = name;
+  doc.name = name;
   STATE.doctors.push(doc);
   saveState();
   renderWizardDoctors();
@@ -249,8 +250,7 @@ function quickAddDoctor() {
   updateWizardSummary();
   updateBlackoutDoctorSelect();
   renderQuickSetupSummary();
-  const newInput = document.getElementById('quick-add-doctor-name');
-  if (newInput) newInput.focus();
+  if (input) { input.value = ''; input.focus(); }
 }
 
 function removeDoctor(id) {
@@ -260,7 +260,7 @@ function removeDoctor(id) {
     if (Object.keys(STATE.blackouts[mk]).length === 0) delete STATE.blackouts[mk];
   }
   saveState();
-  if (wizardStep === 2) renderWizardDoctors();
+  renderWizardDoctors();
   renderDoctorAccordion();
   updateWizardSummary();
   updateBlackoutDoctorSelect();
@@ -284,10 +284,10 @@ function addOffice() {
 function quickAddOffice() {
   const input = document.getElementById('quick-add-office-name');
   const name = input ? input.value.trim() : '';
+  if (!name) { if (input) input.focus(); return; }
   const id = 'off_' + generateId().slice(0, 5);
   const office = {
-    id, name: name || ('Office ' + (STATE.offices.length + 1)),
-    isHospital: STATE.offices.length === 0,
+    id, name, isHospital: STATE.offices.length === 0,
     maxPerShift: 2, restrictedTuesdayMax: 1, locationAddress: ''
   };
   STATE.offices.push(office);
@@ -295,8 +295,7 @@ function quickAddOffice() {
   renderWizardOffices();
   updateWizardSummary();
   renderQuickSetupSummary();
-  const newInput = document.getElementById('quick-add-office-name');
-  if (newInput) newInput.focus();
+  if (input) { input.value = ''; input.focus(); }
 }
 
 function updateOfficeField(officeId, field, value) {
@@ -823,11 +822,19 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-    // Wizard step dots clickable
-    document.querySelectorAll('.step-dot').forEach(dot => {
-        dot.addEventListener('click', (e) => {
+    // Wizard step dots clickable — click step-item (dot + label)
+    document.querySelectorAll('.step-item').forEach(item => {
+        item.addEventListener('click', (e) => {
             e.stopPropagation();
-            showWizardStep(parseInt(dot.dataset.step));
+            const step = parseInt(item.dataset.step);
+            if (step) showWizardStep(step);
+        });
+        item.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const step = parseInt(item.dataset.step);
+                if (step) showWizardStep(step);
+            }
         });
     });
 

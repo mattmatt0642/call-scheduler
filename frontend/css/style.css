@@ -118,8 +118,7 @@ main {
 .tab-pane { display: none; }
 .tab-pane.active { display: block; }
 .page { max-width: 960px; margin: 0 auto; }
-#tab-schedule { display: none; flex-direction: column; }
-#tab-schedule.active { display: flex; }
+#tab-schedule.active { display: flex; flex-direction: column; }
 #tab-schedule .page { max-width: none; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #tab-schedule #calendar-container { flex: 1; min-height: 0; overflow: hidden; }
 #tab-schedule .schedule-sheet { display: flex; flex-direction: column; height: 100%; max-height: calc(100vh - 160px); }
@@ -165,12 +164,11 @@ main {
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: visible;
+  overflow: hidden;
   box-shadow: var(--shadow);
 }
-#wiz-doctors-list,
-#wiz-offices-list {
-  min-height: 120px;
+#wstep-2 .card,
+#wstep-3 .card {
   overflow: visible;
 }
 .card-header {
@@ -1177,11 +1175,17 @@ margin: 1px 0;
  padding: 0.8rem 0 1rem;
 }
 .step-item {
- display: flex;
- flex-direction: column;
- align-items: center;
- gap: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--radius-sm);
+  transition: background 150ms;
 }
+.step-item:hover { background: var(--bg-hover); }
+.step-item:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
 .step-dot {
 width: 32px;
 height: 32px;
