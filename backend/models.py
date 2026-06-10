@@ -115,7 +115,7 @@ class ScheduleInput:
     custom_restrictions: List[CustomRestriction]
     locked_assignments: List[Assignment]
     historical_balance: Dict[str, Dict]
-    solver_time_limit_seconds: int = 900
+    solver_time_limit_seconds: int = 120
 
 @dataclass
 class ScheduleResult:

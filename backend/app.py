@@ -58,13 +58,19 @@ def require_auth(f):
 
 @app.route('/')
 def serve_index():
-    return send_from_directory(FRONTEND_DIR, 'index.html')
+    resp = make_response(send_from_directory(FRONTEND_DIR, 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 @app.route('/<path:path>')
 def serve_static(path):
-    if os.path.isfile(os.path.join(FRONTEND_DIR, path)):
-        return send_from_directory(FRONTEND_DIR, path)
-    return send_from_directory(FRONTEND_DIR, 'index.html')
+    filepath = os.path.join(FRONTEND_DIR, path)
+    if os.path.isfile(filepath):
+        resp = make_response(send_from_directory(FRONTEND_DIR, path))
+    else:
+        resp = make_response(send_from_directory(FRONTEND_DIR, 'index.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +243,7 @@ def _build_schedule_input(data: dict) -> ScheduleInput:
         custom_restrictions=custom_restrictions,
         locked_assignments=locked,
         historical_balance=data.get("historicalBalance", data.get("historical_balance", {})),
-        solver_time_limit_seconds=data.get("solverTimeLimitSeconds", data.get("solver_time_limit_seconds", 900))
+        solver_time_limit_seconds=data.get("solverTimeLimitSeconds", data.get("solver_time_limit_seconds", 120))
     )
 
 

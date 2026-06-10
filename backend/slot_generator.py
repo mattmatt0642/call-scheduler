@@ -81,7 +81,7 @@ def generate_slots(
                 slots.append(ShiftSlot(
                     slot_id=f"{date}_{hospital.id}_call_weekend",
                     date=date, office_id=hospital.id, shift_type="call_weekend",
-                    start_time="07:00", end_time="23:59", max_doctors=1,
+                    start_time="00:00", end_time="23:59", max_doctors=1,
                     is_weekend=True,
                     call_balance_group="weekend_block"
                 ))
