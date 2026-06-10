@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Set
 from datetime import date as dt_class, timedelta
 from models import (DoctorProfile, Office, ShiftSlot, Assignment, ScheduleInput,
-    abs_times_overlap, get_call_balance_group, get_days_in_month, get_nth_tuesdays)
+ abs_times_overlap, get_call_balance_group, get_days_in_month, get_nth_tuesdays, prev_date)
 
 CALL_SHIFT_TYPES = {"call_day", "call_night", "call_weekend", "call_weekend_sun"}
 CLEARING_SHIFT_TYPES = {"office_am", "office_pm", "office_late", "surgical_am", "surgical_hosp_pm"}
@@ -175,6 +175,41 @@ def check_h3_call_coverage(
 
     for slot in call_slots:
         count = len(assigned.get(slot.slot_id, []))
+        if slot.shift_type == "call_weekend_sun":
+            if count == 0:
+                sat_date = prev_date(slot.date)
+                sat_assigned = len(assigned.get(f"{sat_date}_{slot.office_id}_call_weekend", []))
+                if sat_assigned > 0:
+                    violations.append(ConstraintViolation(
+                        constraint_id = "H3",
+                        constraint_name = "call coverage",
+                        severity = "hard",
+                        description = f"No doctor assigned to call_weekend_sun on {slot.date} but Saturday is assigned. Weekend block pairing broken.",
+                        affected_doctors = [],
+                        affected_dates = [slot.date],
+                        suggestion = "Check weekend block assignment logic. Saturday and Sunday must be same doctor."
+                    ))
+                else:
+                    violations.append(ConstraintViolation(
+                        constraint_id = "H3",
+                        constraint_name = "call coverage",
+                        severity = "hard",
+                        description = f"No doctor assigned to call_weekend_sun on {slot.date}. (balance group: weekend_block) (preferences have no influence on this balance group)",
+                        affected_doctors = [],
+                        affected_dates = [slot.date],
+                        suggestion = "Not enough doctors available for all call slots."
+                    ))
+            elif count > 1:
+                violations.append(ConstraintViolation(
+                    constraint_id = "H3",
+                    constraint_name = "call coverage",
+                    severity = "hard",
+                    description = f"Slot {slot.slot_id} has {count} doctors assigned - must be exactly 1.",
+                    affected_doctors = assigned[slot.slot_id],
+                    affected_dates = [slot.date],
+                    suggestion = "Solver bug - report with schedule state."
+                ))
+            continue
         if count == 0:
             pref_note = ""
             if slot.call_balance_group in ("friday_night", "weekend_block"):
