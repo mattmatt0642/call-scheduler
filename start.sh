@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+PORT="${PORT:-5000}"
+PID=$(lsof -ti :"$PORT" 2>/dev/null || true)
+if [ -n "$PID" ]; then
+  echo "Killing existing process on port $PORT (PID: $PID)..."
+  kill $PID 2>/dev/null || true
+  sleep 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 VENV_DIR="$BACKEND_DIR/.venv"
@@ -14,10 +22,7 @@ echo "Installing dependencies..."
 source "$VENV_DIR/bin/activate"
 pip install -q -r "$BACKEND_DIR/requirements.txt"
 
-echo "Starting Call Scheduler..."
-echo "Password is in $SCRIPT_DIR/.secret"
-echo ""
-cat "$SCRIPT_DIR/.secret" 2>/dev/null || echo "(will be generated on first run)"
+echo "Starting Call Scheduler on port $PORT..."
 echo ""
 
 cd "$BACKEND_DIR"
