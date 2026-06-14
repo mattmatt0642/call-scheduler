@@ -114,10 +114,11 @@ def _parse_doctor(d: dict) -> DoctorProfile:
         required_sessions_per_week=d.get("requiredSessionsPerWeek", d.get("required_sessions_per_week", 5)),
         hospital_call_eligible=d.get("hospitalCallEligible", d.get("hospital_call_eligible", True)),
         surgical_assist_eligible=d.get("surgicalAssistEligible", d.get("surgical_assist_eligible", True)),
-        max_weekday_day_calls=d.get("maxWeekdayDayCalls", d.get("max_weekday_day_calls", 1)),
-        max_weekday_night_calls=d.get("maxWeekdayNightCalls", d.get("max_weekday_night_calls", 1)),
-        max_friday_night_calls=d.get("maxFridayNightCalls", d.get("max_friday_night_calls", 1)),
-        max_weekend_blocks=d.get("maxWeekendBlocks", d.get("max_weekend_blocks", 1)),
+        weekend_call_off=d.get("weekendCallOff", d.get("weekend_call_off", False)),
+        max_weekday_day_calls=d.get("maxWeekdayDayCalls", d.get("max_weekday_day_calls", 5)),
+        max_weekday_night_calls=d.get("maxWeekdayNightCalls", d.get("max_weekday_night_calls", 5)),
+        max_friday_night_calls=d.get("maxFridayNightCalls", d.get("max_friday_night_calls", 2)),
+        max_weekend_blocks=d.get("maxWeekendBlocks", d.get("max_weekend_blocks", 2)),
         preferred_call_days=d.get("preferredCallDays", d.get("preferred_call_days", [])),
         post_call_preference=d.get("postCallPreference", d.get("post_call_preference", "no_preference")),
         call_shift_preference=d.get("callShiftPreference", d.get("call_shift_preference", "no_preference")),
@@ -134,7 +135,7 @@ def _parse_office(o: dict) -> Office:
         id=o["id"],
         name=o["name"],
         is_hospital=o.get("isHospital", o.get("is_hospital", False)),
-        max_per_shift=o.get("maxPerShift", o.get("max_per_shift", 1)),
+        max_per_shift=o.get("maxPerShift", o.get("max_per_shift", 2)),
         restricted_tuesday_max=o.get("restrictedTuesdayMax", o.get("restricted_tuesday_max", 1)),
         location_address=o.get("locationAddress", o.get("location_address", ""))
     )
@@ -412,6 +413,4 @@ def handle_generic_error(e):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"[auth] Shared secret: {_SHARED_SECRET}")
-    print(f"[auth] Secret file: {SECRET_FILE}")
     app.run(host="0.0.0.0", port=port, debug=False)
