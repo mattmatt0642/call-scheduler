@@ -53,9 +53,12 @@ function buildDocCard(doc) {
         <label class="toggle-label"><span class="toggle-text">Hospital Call</span>
           <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
         </label>
-        <label class="toggle-label"><span class="toggle-text">Surgical Assist</span>
-          <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
-        </label>
+      <label class="toggle-label"><span class="toggle-text">Surgical Assist</span>
+      <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
+      </label>
+      <label class="toggle-label"><span class="toggle-text">No Wknd Call</span>
+      <div class="toggle-switch"><input type="checkbox" ${doc.weekendCallOff ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendCallOff', this.checked)"/><span class="toggle-slider"></span></div>
+      </label>
       </div>
     </div>
 
@@ -350,6 +353,15 @@ function updateOneTimeOverride(docId, idx, field, value) {
 function reopenDocItem(docId) {
   const item = document.querySelector(`.doc-item[data-doc-id="${docId}"]`);
   if (item) item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const advBody = document.getElementById('adv-' + docId);
+  if (advBody) {
+    advBody.classList.add('open');
+    const btn = advBody.previousElementSibling;
+    if (btn) {
+      const arrow = btn.querySelector('.advanced-arrow');
+      if (arrow) arrow.innerHTML = '&#9660;';
+    }
+  }
 }
 
 let _dragDocId = null;

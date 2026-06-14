@@ -69,8 +69,17 @@ function _initAuthOverlay() {
             errEl.textContent = e.message;
         }
     };
-    btn.addEventListener('click', attempt);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') attempt(); });
+  btn.addEventListener('click', attempt);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') attempt(); if (e.key === 'Escape') input.blur(); });
+
+  overlay.addEventListener('keydown', e => {
+    if (e.key !== 'Tab' || _isAuthenticated) return;
+    const focusable = overlay.querySelectorAll('input, button');
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

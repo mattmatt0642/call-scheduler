@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Call Scheduler</title>
-<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/style.css?v=3" />
 </head>
 <body>
 <div id="root">
@@ -29,23 +29,23 @@
 
 <!-- Step indicator -->
 <div class="step-bar" id="wizard-steps">
-<div class="step-item">
-<div class="step-dot active" data-step="1">1</div>
+<div class="step-item" data-step="1" role="button" tabindex="0" title="Schedule Settings">
+<div class="step-dot active">1</div>
 <div class="step-label">Schedule</div>
 </div>
 <div class="step-line"></div>
-<div class="step-item">
-<div class="step-dot" data-step="2">2</div>
+<div class="step-item" data-step="2" role="button" tabindex="0" title="Edit Doctors">
+<div class="step-dot">2</div>
 <div class="step-label">Doctors</div>
 </div>
 <div class="step-line"></div>
-<div class="step-item">
-<div class="step-dot" data-step="3">3</div>
+<div class="step-item" data-step="3" role="button" tabindex="0" title="Edit Offices">
+<div class="step-dot">3</div>
 <div class="step-label">Offices</div>
 </div>
 <div class="step-line"></div>
-<div class="step-item">
-<div class="step-dot" data-step="4">4</div>
+<div class="step-item" data-step="4" role="button" tabindex="0" title="Generate Schedule">
+<div class="step-dot">4</div>
 <div class="step-label">Generate</div>
 </div>
 </div>
@@ -70,7 +70,7 @@
           <option value="6">July</option><option value="7">August</option>
           <option value="8" selected>September</option><option value="9">October</option>
           <option value="10">November</option><option value="11">December</option>
-        </div>
+        </select>
       </div>
     </div>
 
@@ -80,9 +80,10 @@
     </div>
 
     <div class="wizard-nav">
-<div class="spacer"></div>
-<button class="btn btn-primary" onclick="wizardNext()">Next: Doctors &rarr;</button>
-</div>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" onclick="wizardNext()">Next: Doctors &rarr;</button>
+    </div>
+  </div>
 </div>
 
 <!-- Step 2: Doctors -->
@@ -227,6 +228,10 @@
 <span class="stat-label">Session Fairness</span>
 <span class="stat-val" id="wiz-sched-session-gini">&mdash;</span>
 </div>
+<div class="stat-chip">
+<span class="stat-label">Unfilled</span>
+<span class="stat-val" id="wiz-sched-unfilled">&mdash;</span>
+</div>
 </div>
 <div id="wiz-calendar-container"></div>
 </div>
@@ -281,6 +286,10 @@
 <span class="stat-label">Session Fairness</span>
 <span class="stat-val" id="sched-session-gini">&mdash;</span>
 </div>
+<div class="stat-chip">
+<span class="stat-label">Unfilled</span>
+<span class="stat-val" id="sched-unfilled">&mdash;</span>
+</div>
 </div>
 
 <div id="calendar-container"></div>
@@ -309,18 +318,19 @@
 </main>
 
 <footer class="app-footer">
-<span id="api-status">Checking API&hellip;</span>
+<span id="api-status"><span class="api-dot"></span>Checking API&hellip;</span>
 <span>&middot;</span>
 <span id="data-status"></span>
 </footer>
 
 </div>
 
-<script src="js/storage.js"></script>
-<script src="js/api.js"></script>
-<script src="js/calendar.js"></script>
-<script src="js/doctor_config.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/app.js"></script>
+<script src="js/storage.js?v=3"></script>
+<script src="js/api.js?v=3"></script>
+<script src="js/calendar.js?v=3"></script>
+<script src="js/doctor_config.js?v=3"></script>
+<script src="js/auth.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
+<div class="toast-container" id="toast-container"></div>
 </body>
 </html>

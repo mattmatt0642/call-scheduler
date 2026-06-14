@@ -72,8 +72,9 @@ parsed[key] = JSON.parse(JSON.stringify(DEFAULT_STATE[key]));
 }
 for (const doc of parsed.doctors) {
 if (doc.hospitalCallEligible === undefined) doc.hospitalCallEligible = true;
-if (doc.surgicalAssistEligible === undefined) doc.surgicalAssistEligible = true;
-if (doc.maxFridayNightCalls === undefined) doc.maxFridayNightCalls = 2;
+    if (doc.surgicalAssistEligible === undefined) doc.surgicalAssistEligible = true;
+    if (doc.weekendCallOff === undefined) doc.weekendCallOff = false;
+    if (doc.maxFridayNightCalls === undefined) doc.maxFridayNightCalls = 2;
 if (doc.maxWeekendBlocks === undefined) doc.maxWeekendBlocks = 2;
 }
 }
@@ -125,6 +126,7 @@ const defaultStateDoctor = () => ({
   requiredSessionsPerWeek: 5,
   hospitalCallEligible: true,
   surgicalAssistEligible: true,
+  weekendCallOff: false,
   maxWeekdayDayCalls: 5,
   maxWeekdayNightCalls: 5,
   maxFridayNightCalls: 2,

@@ -96,56 +96,118 @@ function buildCalendarHTML(year, month, scheduleData) {
     weeks.push(currentWeek);
   }
 
-  let html = `<div class="schedule-sheet"><table class="sheet-table">`;
-  html += '<thead><tr><th>Shift</th>';
-  for (let col = 0; col < 7; col++) {
-    const cls = col >= 5 ? ' class="weekend-col"' : '';
-    html += `<th${cls}>${DAY_NAMES[col]}</th>`;
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const MONTH_ABBREV = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const isCurrentMonth = (today.getFullYear() === year && today.getMonth() === month);
+
+  function weekLabel(week) {
+    const weekStart = week.find(d => d !== null);
+    const weekEnd = [...week].reverse().find(d => d !== null);
+    return weekStart ? `${MONTH_ABBREV[month]} ${weekStart}${weekEnd !== weekStart ? '–' + weekEnd : ''}` : '';
   }
-  html += '</tr></thead>';
 
-  for (let wi = 0; wi < weeks.length; wi++) {
-    const week = weeks[wi];
-    const sepCls = wi > 0 ? ' week-separator' : '';
+  function colClasses(col, dayNum) {
+    const cls = [];
+    if (col >= 5) cls.push('weekend-col');
+    if (isCurrentMonth && dayNum) {
+      const cellDateStr = `${year}-${MONTH_STR}-${String(dayNum).padStart(2, '0')}`;
+      if (cellDateStr === todayStr) cls.push('today-col');
+    }
+    return cls;
+  }
 
-    html += `<tbody class="week-group${sepCls}">`;
-
-    html += '<tr class="week-date-header">';
-    html += '<td></td>';
+  function renderWeekDayHeaders(week, isSecond) {
+    let h = '';
     for (let col = 0; col < 7; col++) {
       const dayNum = week[col];
-      const wkendCls = col >= 5 ? ' weekend-col' : '';
-      if (dayNum) {
-        html += `<td class="${wkendCls}" style="font-size:0.65rem;color:var(--text-muted);text-align:center;padding:0.15rem 0.4rem;">${dayNum}</td>`;
+      const cls = colClasses(col, dayNum);
+      if (isSecond && col === 0) cls.push('week-divider-col');
+      const dateLabel = dayNum ? `<span class="th-date">${dayNum}</span>` : '';
+      h += `<th class="${cls.join(' ')}"><span class="th-day">${DAY_NAMES[col]}</span>${dateLabel}</th>`;
+    }
+    return h;
+  }
+
+  function renderWeekBodyRow(row, week, isSecond) {
+    let h = '';
+    for (let col = 0; col < 7; col++) {
+      const dayNum = week[col];
+      const cls = colClasses(col, dayNum);
+      if (isSecond && col === 0) cls.push('week-divider-col');
+      const clsAttr = cls.length ? ` class="${cls.join(' ')}"` : '';
+      if (!dayNum) {
+        h += `<td${clsAttr}></td>`;
+        continue;
+      }
+      const cell = dayData[dayNum].slots[row.key];
+      if (cell) {
+        h += `<td${clsAttr}><div class="chip ${cell.chip}">${cell.doc}</div></td>`;
       } else {
-        html += `<td class="${wkendCls}" style="font-size:0.65rem;color:var(--text-muted);text-align:center;padding:0.15rem 0.4rem;"></td>`;
+        h += `<td${clsAttr}><span class="chip chip-empty">·</span></td>`;
       }
     }
-    html += '</tr>';
+    return h;
+  }
 
+  function renderSingleWeekBlock(week) {
+    const label = weekLabel(week);
+    let h = `<div class="schedule-week-block">`;
+    h += `<div class="week-block-header"><span>${label}</span></div>`;
+    h += `<div class="week-block-scroll"><table class="sheet-table">`;
+    h += '<thead><tr><th>Shift</th>';
+    h += renderWeekDayHeaders(week, false);
+    h += '</tr></thead>';
+    h += '<tbody>';
+    for (const row of shiftRows) {
+      h += '<tr>';
+      h += `<td>${row.label}</td>`;
+      h += renderWeekBodyRow(row, week, false);
+      h += '</tr>';
+    }
+    h += '</tbody></table></div></div>';
+    return h;
+  }
+
+  let html = '';
+  for (let wi = 0; wi < weeks.length; wi += 2) {
+    const week1 = weeks[wi];
+    const week2 = weeks[wi + 1];
+
+    if (!week2) {
+      html += renderSingleWeekBlock(week1);
+      continue;
+    }
+
+    const label1 = weekLabel(week1);
+    const label2 = weekLabel(week2);
+
+    html += `<div class="schedule-week-block schedule-week-pair">`;
+    html += `<div class="week-block-header week-pair-header"><span>${label1}</span><span class="week-pair-sep"></span><span>${label2}</span></div>`;
+    html += `<div class="week-block-scroll"><table class="sheet-table sheet-table-pair">`;
+
+    html += '<thead>';
+    html += `<tr><th rowspan="2">Shift</th>`;
+    html += `<th colspan="7" class="week-header-left">${label1}</th>`;
+    html += `<th colspan="7" class="week-header-right week-divider-col">${label2}</th>`;
+    html += '</tr><tr>';
+    html += renderWeekDayHeaders(week1, false);
+    html += renderWeekDayHeaders(week2, true);
+    html += '</tr></thead>';
+
+    html += '<tbody>';
     for (const row of shiftRows) {
       html += '<tr>';
       html += `<td>${row.label}</td>`;
-      for (let col = 0; col < 7; col++) {
-        const dayNum = week[col];
-        const wkendCls = col >= 5 ? ' weekend-col' : '';
-        if (!dayNum) {
-          html += `<td class="${wkendCls}"></td>`;
-          continue;
-        }
-        const cell = dayData[dayNum].slots[row.key];
-        if (cell) {
-          html += `<td class="${wkendCls}"><div class="chip ${cell.chip}">${cell.doc}</div></td>`;
-        } else {
-          html += `<td class="${wkendCls}"><span class="chip chip-empty">\u2014</span></td>`;
-        }
-      }
+      html += renderWeekBodyRow(row, week1, false);
+      html += renderWeekBodyRow(row, week2, true);
       html += '</tr>';
     }
-    html += '</tbody>';
+    html += '</tbody></table></div></div>';
   }
 
-  html += '</table></div>';
   return html;
 }
 
@@ -440,7 +502,13 @@ function refreshBlackoutCalendar() {
 }
 
 document.addEventListener('click', function(e) {
- if (_activePopup && !_activePopup.contains(e.target)) {
-  closePeriodPopup();
- }
+  if (_activePopup && !_activePopup.contains(e.target)) {
+    closePeriodPopup();
+  }
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && _activePopup) {
+    closePeriodPopup();
+  }
 });

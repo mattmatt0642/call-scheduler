@@ -3,8 +3,20 @@
    ========================= */
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function showToast(msg, duration = 2500) {
+  const c = document.getElementById('toast-container');
+  if (!c) return;
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 250); }, duration);
+}
 let currentScheduleYear = new Date().getFullYear();
 let currentScheduleMonth = new Date().getMonth();
+let wizViewYear = currentScheduleYear;
+let wizViewMonth = currentScheduleMonth;
 let wizardStep = 1;
 
 // ── Wizard ──────────────────────────────────────────────────────────────────
@@ -29,6 +41,13 @@ function showWizardStep(step) {
     else if (s < step) { dot.classList.add('done'); dot.innerHTML = '&#10003;'; }
   });
 
+  document.querySelectorAll('.step-line').forEach((line, i) => {
+    const leftStep = i + 1;
+    const rightStep = i + 2;
+    if (leftStep < step && rightStep <= step) line.classList.add('done');
+    else line.classList.remove('done');
+  });
+
   try { renderQuickSetupSummary(); } catch(e) { console.error('[showWizardStep] renderQuickSetupSummary error:', e); }
   try { renderWizardDoctors(); } catch(e) { console.error('[showWizardStep] renderWizardDoctors error:', e); }
   try { renderWizardOffices(); } catch(e) { console.error('[showWizardStep] renderWizardOffices error:', e); }
@@ -50,12 +69,16 @@ function showWizSchedulePreview() {
   const preview = document.getElementById('wiz-schedule-preview');
   if (!preview) return;
   preview.classList.remove('hidden');
-  const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
+  const mk = getMonthKey(wizViewYear, wizViewMonth);
   const data = STATE.schedules[mk];
   if (data) {
     const container = document.getElementById('wiz-calendar-container');
-    if (container) container.innerHTML = buildCalendarHTML(currentScheduleYear, currentScheduleMonth, data);
+    if (container) container.innerHTML = buildCalendarHTML(wizViewYear, wizViewMonth, data);
     updateWizScheduleDisplay(data);
+  } else {
+    const container = document.getElementById('wiz-calendar-container');
+    if (container) container.innerHTML = '';
+    updateWizScheduleDisplay(null);
   }
   preview.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -63,8 +86,8 @@ function showWizSchedulePreview() {
 function updateWizScheduleDisplay(data) {
   const label = document.getElementById('wiz-sched-month-label');
   const navLabel = document.getElementById('wiz-sched-nav-label');
-  if (label) label.textContent = `${MONTHS[currentScheduleMonth]} ${currentScheduleYear}`;
-  if (navLabel) navLabel.textContent = `${MONTHS[currentScheduleMonth].slice(0, 3)} ${currentScheduleYear}`;
+  if (label) label.textContent = `${MONTHS[wizViewMonth]} ${wizViewYear}`;
+  if (navLabel) navLabel.textContent = `${MONTHS[wizViewMonth].slice(0, 3)} ${wizViewYear}`;
 
   const statusEl = document.getElementById('wiz-sched-solver-status');
   const callGiniEl = document.getElementById('wiz-sched-call-gini');
@@ -88,12 +111,20 @@ function updateWizScheduleDisplay(data) {
     sessGiniEl.textContent = v != null ? (v <= 0.10 ? 'Fair' : 'Uneven') : '—';
     sessGiniEl.className = 'stat-val' + (v > 0.10 ? ' val-warn' : v != null ? ' val-ok' : '');
   }
+  const wizUnfilledEl = document.getElementById('wiz-sched-unfilled');
+  if (wizUnfilledEl) {
+    const totalSlots = data?.slots?.length || 0;
+    const filledSlots = data?.assignments?.length || 0;
+    const unfilled = totalSlots - filledSlots;
+    wizUnfilledEl.textContent = unfilled > 0 ? String(unfilled) : '0';
+    wizUnfilledEl.className = 'stat-val' + (unfilled > 0 ? ' val-warn' : totalSlots > 0 ? ' val-ok' : '');
+  }
 }
 
 function changeWizScheduleMonth(delta) {
-  currentScheduleMonth += delta;
-  if (currentScheduleMonth > 11) { currentScheduleMonth = 0; currentScheduleYear++; }
-  if (currentScheduleMonth < 0) { currentScheduleMonth = 11; currentScheduleYear--; }
+  wizViewMonth += delta;
+  if (wizViewMonth > 11) { wizViewMonth = 0; wizViewYear++; }
+  if (wizViewMonth < 0) { wizViewMonth = 11; wizViewYear--; }
   showWizSchedulePreview();
 }
 
@@ -171,10 +202,13 @@ function renderWizardDoctors() {
   <label class="toggle-label"><span class="toggle-text">Hospital Call</span>
   <div class="toggle-switch"><input type="checkbox" ${doc.hospitalCallEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'hospitalCallEligible', this.checked)"/><span class="toggle-slider"></span></div>
   </label>
-  <label class="toggle-label"><span class="toggle-text">Surgical</span>
-  <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
-  </label>
-  </div>
+        <label class="toggle-label"><span class="toggle-text">Surgical</span>
+        <div class="toggle-switch"><input type="checkbox" ${doc.surgicalAssistEligible ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'surgicalAssistEligible', this.checked)"/><span class="toggle-slider"></span></div>
+        </label>
+        <label class="toggle-label"><span class="toggle-text">No Wknd Call</span>
+        <div class="toggle-switch"><input type="checkbox" ${doc.weekendCallOff ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendCallOff', this.checked)"/><span class="toggle-slider"></span></div>
+        </label>
+        </div>
   </div>
   <div class="actions">
   <button class="btn btn-sm btn-ghost" onclick="switchTab('doctors'); setTimeout(() => openDoctorAccordion('${doc.id}'), 80)">Edit</button>
@@ -196,16 +230,17 @@ function renderWizardOffices() {
     let html = '<div class="entity-list">';
     html += STATE.offices.map(off => {
       const icon = off.isHospital ? '⌁' : '○';
+      const avatarCls = off.isHospital ? 'avatar office-hospital-avatar' : 'avatar';
       return `<div class="entity-card">
-  <div class="avatar" style="${off.isHospital ? 'background:var(--accent-blue-light);color:var(--accent-blue)' : ''}">${icon}</div>
-  <div class="info" style="flex:1">
-  <input type="text" class="doc-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)" style="margin-bottom:0.3rem"/>
-  <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap">
-  <label class="toggle-label" style="margin:0"><span class="toggle-text">Hospital</span>
+  <div class="${avatarCls}">${icon}</div>
+  <div class="info">
+  <input type="text" class="doc-name-input office-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)"/>
+  <div class="office-toggles-row">
+  <label class="toggle-label"><span class="toggle-text">Hospital</span>
   <div class="toggle-switch"><input type="checkbox" ${off.isHospital ? 'checked' : ''} onchange="updateOfficeField('${off.id}', 'isHospital', this.checked)"/><span class="toggle-slider"></span></div>
   </label>
-  <div class="limit-item" style="margin:0"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
-  <div class="limit-item" style="margin:0"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
+  <div class="limit-item"><label>Max/Shift</label><input type="number" min="1" max="10" value="${off.maxPerShift}" onchange="updateOfficeField('${off.id}', 'maxPerShift', parseInt(this.value)||2)"/></div>
+  <div class="limit-item"><label>Restr. Tue Max</label><input type="number" min="0" max="10" value="${off.restrictedTuesdayMax}" onchange="updateOfficeField('${off.id}', 'restrictedTuesdayMax', parseInt(this.value)||1)"/></div>
   </div>
   </div>
   <div class="actions">
@@ -251,9 +286,13 @@ function quickAddDoctor() {
   updateBlackoutDoctorSelect();
   renderQuickSetupSummary();
   if (input) { input.value = ''; input.focus(); }
+  showToast(`Added ${name}`);
 }
 
 function removeDoctor(id) {
+  const doc = STATE.doctors.find(d => d.id === id);
+  const name = doc ? doc.name : 'this doctor';
+  if (!confirm(`Remove ${name}? This will also clear their time-off data.`)) return;
   STATE.doctors = STATE.doctors.filter(d => d.id !== id);
   for (const mk of Object.keys(STATE.blackouts)) {
     delete STATE.blackouts[mk][id];
@@ -296,6 +335,7 @@ function quickAddOffice() {
   updateWizardSummary();
   renderQuickSetupSummary();
   if (input) { input.value = ''; input.focus(); }
+  showToast(`Added ${name}`);
 }
 
 function updateOfficeField(officeId, field, value) {
@@ -304,11 +344,14 @@ function updateOfficeField(officeId, field, value) {
     office[field] = value;
     saveState();
     if (field === 'isHospital' || field === 'name') renderWizardOffices();
-    if (field === 'isHospital') renderDoctorAccordion();
+    if (field === 'isHospital' || field === 'name') renderDoctorAccordion();
     updateWizardSummary();
 }
 
 function removeOffice(id) {
+  const off = STATE.offices.find(o => o.id === id);
+  const name = off ? off.name : 'this office';
+  if (!confirm(`Remove ${name}?`)) return;
   STATE.offices = STATE.offices.filter(o => o.id !== id);
   saveState();
   renderWizardOffices();
@@ -359,11 +402,17 @@ function validateCallEligibility() {
 }
 
 async function handleGenerate() {
-    const year = parseInt(document.getElementById('wiz-year')?.value || 2026);
-    const month = parseInt(document.getElementById('wiz-month')?.value || 8);
-    const timeout = STATE.settings.solverTimeLimitSeconds || 900;
+  const year = parseInt(document.getElementById('wiz-year')?.value || 2026);
+  const month = parseInt(document.getElementById('wiz-month')?.value || 8);
+  const timeout = STATE.settings.solverTimeLimitSeconds || 900;
   const statusEl = document.getElementById('gen-status');
   const btn = document.getElementById('btn-generate');
+
+  if (isNaN(year) || year < 2020 || year > 2099) {
+    statusEl.innerHTML = '<span class="err">Enter a valid year (2020-2099).</span>';
+    document.getElementById('wiz-year')?.focus();
+    return;
+  }
 
   if (!STATE.doctors.length || !STATE.offices.length) {
     statusEl.innerHTML = '<span class="err">Add at least one doctor and one office first.</span>';
@@ -381,6 +430,7 @@ async function handleGenerate() {
   const panel = document.getElementById('conflict-panel');
   const list = document.getElementById('conflict-list');
   panel?.classList.add('hidden');
+  const t0 = performance.now();
 
   try {
     STATE.settings.solverTimeLimitSeconds = timeout;
@@ -396,10 +446,14 @@ async function handleGenerate() {
 
 		currentScheduleYear = year;
 		currentScheduleMonth = month;
+		wizViewYear = year;
+		wizViewMonth = month;
 
-		statusEl.innerHTML = result.partial
-    ? `<span class="err">Schedule created with ${result.unmetConstraints?.length || 0} issues. Review below.</span>`
-    : '<span class="ok">&#10003; Schedule generated successfully!</span>';
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+      statusEl.innerHTML = result.partial
+        ? `<span class="err">Schedule created with ${result.unmetConstraints?.length || 0} issues (${elapsed}s). Review below.</span>`
+        : `<span class="ok">&#10003; Schedule generated in ${elapsed}s</span>`;
+      if (btn && !result.partial) { btn.classList.add('flash-success'); setTimeout(() => btn.classList.remove('flash-success'), 700); }
 
 		if (result.partial && result.unmetConstraints?.length) {
 			if (list) {
@@ -431,12 +485,17 @@ async function handleGenerate() {
 // ── Schedule view ───────────────────────────────────────────────────────────
 
 function updateCalendarView() {
-	const container = document.getElementById('calendar-container');
-	if (!container) return;
-	const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
-	const data = STATE.schedules[mk];
-	container.innerHTML = buildCalendarHTML(currentScheduleYear, currentScheduleMonth, data);
-	updateScheduleDisplay(data);
+  const container = document.getElementById('calendar-container');
+  if (!container) return;
+  const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
+  const data = STATE.schedules[mk];
+  if (!data) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">&#128197;</div><div class="empty-state-title">No schedule yet</div><div class="empty-state-desc">Go to Setup &rarr; Generate to create a schedule for this month.</div></div>';
+    updateScheduleDisplay(null);
+    return;
+  }
+  container.innerHTML = buildCalendarHTML(currentScheduleYear, currentScheduleMonth, data);
+  updateScheduleDisplay(data);
 }
 
 function updateScheduleDisplay(data) {
@@ -475,6 +534,14 @@ function updateScheduleDisplay(data) {
     sessGiniEl.textContent = v != null ? (v <= 0.10 ? 'Fair' : 'Uneven') : '—';
     sessGiniEl.className = 'stat-val' + (v > 0.10 ? ' val-warn' : v != null ? ' val-ok' : '');
   }
+  const unfilledEl = document.getElementById('sched-unfilled');
+  if (unfilledEl) {
+    const totalSlots = data?.slots?.length || 0;
+    const filledSlots = data?.assignments?.length || 0;
+    const unfilled = totalSlots - filledSlots;
+    unfilledEl.textContent = unfilled > 0 ? String(unfilled) : '0';
+    unfilledEl.className = 'stat-val' + (unfilled > 0 ? ' val-warn' : totalSlots > 0 ? ' val-ok' : '');
+  }
 }
 
 function changeScheduleMonth(delta) {
@@ -494,6 +561,13 @@ function handleClearMonth() {
   updateCalendarView();
   updateBalanceTable();
   updateDataStatus();
+  const wizContainer = document.getElementById('wiz-calendar-container');
+  if (wizContainer && wizViewYear === currentScheduleYear && wizViewMonth === currentScheduleMonth) {
+    wizContainer.innerHTML = '';
+    const wizPreview = document.getElementById('wiz-schedule-preview');
+    if (wizPreview) wizPreview.classList.add('hidden');
+    updateWizScheduleDisplay(null);
+  }
 }
 
 function updateScheduleControls() {
@@ -509,7 +583,7 @@ function updateBalanceTable() {
 
     const hasData = STATE.schedules && Object.keys(STATE.schedules).length > 0;
     if (!hasData) {
-        wrapper.innerHTML = '<p class="empty-msg">Generate a schedule to see the cumulative balance report.</p>';
+        wrapper.innerHTML = '<div class="empty-state"><div class="empty-state-icon">&#9878;</div><div class="empty-state-title">No balance data</div><div class="empty-state-desc">Generate a schedule to see the cumulative balance report.</div></div>';
         if (monthsWrapper) monthsWrapper.innerHTML = '';
         return;
     }
@@ -520,7 +594,7 @@ function updateBalanceTable() {
     const sessCols = ['Sessions', 'AM', 'PM', 'Late'];
     const officeCols = nonHosp.map(o => o.name);
 
-    let html = '<table class="sheet-table balance-table">';
+    let html = '<div class="balance-sheet"><table class="sheet-table balance-table">';
     html += '<thead><tr><th>Doctor</th>';
     for (const c of [...callCols, ...sessCols]) html += `<th>${escapeHtml(c)}</th>`;
     for (const o of officeCols) html += `<th>${escapeHtml(o)}</th>`;
@@ -552,7 +626,7 @@ function updateBalanceTable() {
     html += `<td class="${gini > 0.10 ? 'gini-warn' : 'gini-ok'}" colspan="4">${gini <= 0.10 ? 'Fair' : 'Uneven'} (${gini.toFixed(3)})</td>`;
     html += '<td colspan="5"></td>';
     for (const o of officeCols) html += '<td></td>';
-    html += '<td></td></tr></tbody></table>';
+    html += '<td></td></tr></tbody></table></div>';
     wrapper.innerHTML = html;
 
     if (monthsWrapper) {
@@ -638,8 +712,9 @@ function handleImportDoctors(file) {
 					officePreferences: [],
 					requiredSessionsPerWeek: parseInt(row.requiredSessionsPerWeek || row.required_sessions_per_week || 5) || 5,
 					hospitalCallEligible: !(['false','0','no'].includes(String(row.hospitalCallEligible).toLowerCase())),
-					surgicalAssistEligible: !(['false','0','no'].includes(String(row.surgicalAssistEligible).toLowerCase())),
-					maxWeekdayDayCalls: parseInt(row.maxWeekdayDayCalls || row.max_weekday_day_calls || 5) || 5,
+		surgicalAssistEligible: !(['false','0','no'].includes(String(row.surgicalAssistEligible).toLowerCase())),
+		weekendCallOff: ['true','1','yes'].includes(String(row.weekendCallOff || row.weekend_call_off).toLowerCase()),
+		maxWeekdayDayCalls: parseInt(row.maxWeekdayDayCalls || row.max_weekday_day_calls || 5) || 5,
 					maxWeekdayNightCalls: parseInt(row.maxWeekdayNightCalls || row.max_weekday_night_calls || 5) || 5,
 					maxFridayNightCalls: parseInt(row.maxFridayNightCalls || row.max_friday_night_calls || 2) || 2,
 					maxWeekendBlocks: parseInt(row.maxWeekendBlocks || row.max_weekend_blocks || 2) || 2,
@@ -698,11 +773,11 @@ function handleImportOffices(file) {
 }
 
 function handleExportDoctors() {
-	const headers = ['name','id','hospitalCallEligible','surgicalAssistEligible','requiredSessionsPerWeek','maxWeekdayDayCalls','maxWeekdayNightCalls','maxFridayNightCalls','maxWeekendBlocks','preferredCallDays','standingDaysOff','allowedOffices'];
-	let csv = headers.map(h => `"${h}"`).join(',') + '\n';
-	for (const doc of STATE.doctors) {
-		csv += [ `"${doc.name}"`, doc.id, doc.hospitalCallEligible, doc.surgicalAssistEligible,
-			doc.requiredSessionsPerWeek, doc.maxWeekdayDayCalls, doc.maxWeekdayNightCalls,
+  const headers = ['name','id','hospitalCallEligible','surgicalAssistEligible','weekendCallOff','requiredSessionsPerWeek','maxWeekdayDayCalls','maxWeekdayNightCalls','maxFridayNightCalls','maxWeekendBlocks','preferredCallDays','standingDaysOff','allowedOffices'];
+  let csv = headers.map(h => `"${h}"`).join(',') + '\n';
+  for (const doc of STATE.doctors) {
+    csv += [ `"${doc.name}"`, doc.id, doc.hospitalCallEligible, doc.surgicalAssistEligible, doc.weekendCallOff,
+      doc.requiredSessionsPerWeek, doc.maxWeekdayDayCalls, doc.maxWeekdayNightCalls,
 			doc.maxFridayNightCalls, doc.maxWeekendBlocks,
 			(doc.preferredCallDays||[]).join(';'), (doc.standingDaysOff||[]).join(';'), (doc.allowedOffices||[]).join(';')
 		].join(',') + '\n';
@@ -765,6 +840,8 @@ function switchTab(tabName) {
 	document.querySelectorAll('.tab-pane').forEach(pane =>
 		pane.classList.toggle('active', pane.id === 'tab-' + tabName)
 	);
+	const mainEl = document.querySelector('main');
+	if (mainEl) mainEl.scrollTop = 0;
   if (tabName === 'setup') { showWizardStep(wizardStep); refreshBlackoutCalendar(); }
   if (tabName === 'doctors') renderDoctorAccordion();
   if (tabName === 'schedule') { updateScheduleControls(); updateCalendarView(); }
@@ -857,11 +934,11 @@ document.addEventListener('DOMContentLoaded', () => {
 	apiHealth()
 		.then(() => {
 			const el = document.getElementById('api-status');
-			if (el) { el.textContent = 'API Online'; el.className = 'api-online'; }
+			if (el) { el.innerHTML = '<span class="api-dot online"></span>API Online'; el.className = 'api-online'; }
 		})
 		.catch(() => {
 			const el = document.getElementById('api-status');
-			if (el) { el.textContent = 'API Offline'; el.className = 'api-offline'; }
+			if (el) { el.innerHTML = '<span class="api-dot offline"></span>API Offline'; el.className = 'api-offline'; }
 		});
 
 	updateDataStatus();
