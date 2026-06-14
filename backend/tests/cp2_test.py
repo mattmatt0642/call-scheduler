@@ -35,7 +35,7 @@ for s in wknd_sun:
     assert s.start_time == "00:00", f"{s.slot_id} must start at 00:00"
     assert s.end_time == "23:59", f"{s.slot_id} must end at 23:59"
 for s in wknd_sat:
-    assert s.start_time == "07:00", f"{s.slot_id} must start at 07:00"
+    assert s.start_time == "00:00", f"{s.slot_id} must start at 00:00"
     assert s.end_time == "23:59", f"{s.slot_id} must end at 23:59"
 
 # Sep 2026 Tue/Wed/Thu days: 1,2,3,8,9,10,15,16,17,22,23,24,29,30 = 14 days

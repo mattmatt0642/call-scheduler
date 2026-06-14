@@ -62,13 +62,13 @@ assert len(h6_early) > 0, \
     "Friday night + Saturday 06:00 SHOULD be an H6 violation"
 print("H6 cross-day overlap detected: PASSED")
 
-# H6: Friday night + Saturday weekend block — call_weekend starts 07:00,
-# fri_night ends 07:00, so they touch but do NOT overlap => no H6 violation
+# H6: Friday night + Saturday weekend block — call_weekend starts 00:00,
+# fri_night ends 07:00, so they DO overlap (00:00 < 07:00) => H6 violation
 sat_block_id = "2026-09-05_hosp_call_weekend"
 a4 = Assignment(doctor_id="d1", slot_id=sat_block_id)
 h6_wknd = check_h6_no_overlap([doc], [a1, a4], test_map)
-assert len(h6_wknd) == 0, \
-    "Friday night + Saturday block (07:00-23:59) should NOT be an H6 violation (touching at 07:00)"
-print("H6 Friday night vs weekend block no conflict: PASSED")
+assert len(h6_wknd) > 0, \
+    "Friday night + Saturday block (00:00-23:59) MUST be an H6 violation (spec line 1427)"
+print("H6 Friday night vs weekend block overlap detected: PASSED")
 
 print("\nAll Checkpoint 3 tests passed.")
