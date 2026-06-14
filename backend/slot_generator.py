@@ -127,6 +127,13 @@ def generate_slots(
                     max_doctors=cap,
                     is_restricted_tuesday=is_restricted
                 ))
+            if is_mon_or_thu:
+                cap = _get_capacity(hospital, date, "office_late", custom_restrictions, hospital.max_per_shift)
+                slots.append(ShiftSlot(
+                    slot_id=f"{date}_{hospital.id}_office_late",
+                    date=date, office_id=hospital.id, shift_type="office_late",
+                    start_time="13:30", end_time="18:30", max_doctors=cap
+                ))
 
         if hospital and is_surgical_day:
             slots.append(ShiftSlot(

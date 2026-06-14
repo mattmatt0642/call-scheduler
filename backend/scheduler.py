@@ -155,7 +155,8 @@ def _update_load(load, doctor_id, slot, hospital_id):
                     'surgical_am', 'surgical_hosp_pm'):
         entry['total_sessions'] += 1
         if slot.office_id == hospital_id and entry['post_call_since'] is not None:
-            entry['post_call_since'] = None
+            if slot.date >= entry['post_call_since']:
+                entry['post_call_since'] = None
 
 
 def call_debt_with_preference(doc, load, slot, historical_balance):
@@ -256,11 +257,14 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
         if entry_date == slot.date:
             if isinstance(entry, str):
                 return False
-            if _is_blocked_by_timeoff(entry, slot.shift_type):
-                return False
+        if _is_blocked_by_timeoff(entry, slot.shift_type):
+            return False
 
     dow = dt_class.fromisoformat(slot.date).weekday()
     if dow in doc.standing_days_off:
+        return False
+
+    if doc.weekend_call_off and slot.shift_type in ('call_weekend', 'call_weekend_sun'):
         return False
 
     if doc.allowed_offices is not None and slot.office_id not in doc.allowed_offices:
@@ -270,8 +274,7 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
                                 'call_weekend', 'call_weekend_sun'):
         if slot.office_id != hospital_id:
             doc_assigns = sorted(
-                [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id
-                 and slot_map[a.slot_id].date <= slot.date],
+                [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
                 key=lambda x: (x[0].date, x[0].start_time)
             )
             all_items = [(s, False) for s, _ in doc_assigns] + [(slot, True)]
@@ -279,17 +282,17 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
             post_call_restricted = False
             for s, is_current in all_items:
                 if post_call_restricted:
-                    if is_current:
-                        return False
                     if s.shift_type in ('office_am', 'office_pm', 'office_late',
                                         'surgical_am', 'surgical_hosp_pm'):
                         if s.office_id == hospital_id:
                             post_call_restricted = False
+                            continue
+                        else:
+                            if is_current:
+                                return False
                 if s.shift_type in ('call_day', 'call_night',
                                     'call_weekend', 'call_weekend_sun'):
                     post_call_restricted = True
-            if post_call_restricted:
-                return False
 
     for a in assignments:
         if a.doctor_id != doc_id:
@@ -352,6 +355,9 @@ def _can_assign_ilp(doc, slot, inp, day_off_dates):
         if slot.shift_type in ('call_day', 'call_night',
                                 'call_weekend', 'call_weekend_sun'):
             return False
+    if doc.weekend_call_off:
+        if slot.shift_type in ('call_weekend', 'call_weekend_sun'):
+            return False
     if not doc.surgical_assist_eligible:
         if slot.shift_type in ('surgical_am', 'surgical_hosp_pm'):
             return False
@@ -375,10 +381,62 @@ def _can_assign_ilp(doc, slot, inp, day_off_dates):
     return True
 
 
+def _compute_adjusted_quota(doc, week_num, days, day_off_dates):
+    reduction = 0
+    if isinstance(day_off_dates, dict):
+        doc_days_off = day_off_dates.get(doc.id, [])
+    else:
+        doc_days_off = list(day_off_dates) if day_off_dates else []
+    for entry in doc_days_off:
+        if isinstance(entry, str):
+            d_str = entry
+        elif isinstance(entry, dict):
+            d_str = entry.get("date", "")
+        else:
+            continue
+        day_info = next((d for d in days if d['date'] == d_str), None)
+        if day_info and day_info['week_num'] == week_num:
+            reduction += 1
+    adj = doc.required_sessions_per_week - int(reduction * doc.required_sessions_per_week / 5)
+    return max(0, adj)
+
+
 def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
     """
-    Pure greedy scheduler. Assigns call shifts first (balance-driven),
-    then fills office sessions. Used as fallback when ILP is unavailable.
+    Greedy scheduler. Assigns slots in priority order:
+
+    Phase 0: Expand and lock pre-filled assignments. Replay all locked
+    assignments through _update_load(). This must happen before any other
+    phase so debt calculations and post_call_restricted flags reflect reality.
+
+    Phase 1: Weekend blocks. Assign first — they span two days and are the
+    most constrained. Use call_debt_balance_only("weekend_blocks").
+    Both Sat and Sun slots must be assigned to the same doctor.
+
+    Phase 2: Surgical pairs. Assign next — surgical_am + surgical_hosp_pm
+    must be the same doctor. Assign both atomically (never one without
+    the other). Use session debt at the hospital office.
+
+    Phase 3: Weekday call shifts. For each weekday, in calendar order:
+      a. Check for double-preference doctors first (if both day and night
+         slots are unfilled, and a doctor prefers doubles and is available
+         for both: assign both to the same doctor).
+      b. Fill day call slot: call_debt_with_preference(shift_type="call_day")
+      c. Fill night call slot:
+         - Friday: call_debt_balance_only("friday_night") — NO preferences
+         - Mon–Thu: call_debt_with_preference(shift_type="call_night")
+
+    Phase 4: Office sessions. For each week of the month, fill each
+    doctor's session quota. Process offices in ranked order
+    (global/per-doctor preference). Spread sessions across multiple offices
+    (not all at one). Proportionally reduce quota for days off in that week.
+
+    Phase 5: Post-call morning assignments (soft preference S4).
+    For doctors with post_call_preference="work", after a call_night,
+    try to assign the hospital office_am the following morning.
+
+    Phase 6: Mon/Thu late shifts (soft balance S3).
+    Distribute office_late slots aiming for ~1 per week per doctor.
     """
     from constraint_checker import validate_schedule, ConstraintViolation
     from metrics import compute_counts, gini
@@ -409,13 +467,6 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             _update_load(load, a.doctor_id, slot, hospital_id)
 
     weekend_blocks_list = get_weekend_blocks(inp.year, inp.month)
-    paired_sun_ids = set()
-    if hospital_id:
-        for block in weekend_blocks_list:
-            sat_id = f"{block.saturday}_{hospital_id}_call_weekend"
-            sun_id = f"{block.sunday}_{hospital_id}_call_weekend_sun"
-            if sat_id in slot_map and sun_id in slot_map:
-                paired_sun_ids.add(sun_id)
 
     def _find_eligible(slot, p_sun_id=None):
         existing = [a for a in assignments if a.slot_id == slot.slot_id]
@@ -432,7 +483,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             if slot.shift_type in ('call_day', 'call_night'):
                 partner_type = 'call_night' if slot.shift_type == 'call_day' else 'call_day'
                 partner_id = f"{slot.date}_{slot.office_id}_{partner_type}"
-                if any(a.doctor_id == doc.id and a.slot_id == partner_id for a in assignments):
+                already_has_partner = any(a.doctor_id == doc.id and a.slot_id == partner_id for a in assignments)
+                if already_has_partner:
+                    if doc.call_shift_preference == 'single':
+                        continue
+                slot_date = dt_class.fromisoformat(slot.date)
+                if slot_date.weekday() >= 5:
                     continue
             if p_sun_id:
                 sun_slot = slot_map[p_sun_id]
@@ -455,9 +511,7 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             assignments.append(Assignment(doctor_id=doc.id, slot_id=p_sun_id))
             _update_load(load, doc.id, sun_slot, hospital_id)
 
-    # Phase 1: Assign weekend blocks first (they are the most constrained
-    # because call_night on Friday overlaps call_weekend on Saturday).
-    # Assigning them first prevents friday-night calls from blocking them.
+    # Phase 1: Weekend blocks — most constrained, assign first
     weekend_call_slots = [s for s in slots
                           if s.shift_type == 'call_weekend']
     weekend_call_slots.sort(key=lambda s: s.date)
@@ -476,73 +530,11 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             _do_assign(slot, doc, p_sun_id)
             break
 
-    # Phase 2: Assign weekday day/night calls (excluding friday nights)
-    weekday_call_slots = [s for s in slots
-                          if s.shift_type in ('call_day', 'call_night')
-                          and s.call_balance_group != 'friday_night']
-    weekday_call_slots.sort(key=lambda s: (s.date, s.start_time))
-    for slot in weekday_call_slots:
-        for debt, doc in _find_eligible(slot):
-            if len([a for a in assignments if a.slot_id == slot.slot_id]) >= slot.max_doctors:
-                break
-            _do_assign(slot, doc)
-            break
-
-    # Phase 3: Assign friday night calls last (they may overlap with
-    # already-assigned weekend blocks, so only assign if no conflict)
-    friday_night_slots = [s for s in slots
-                          if s.shift_type == 'call_night'
-                          and s.call_balance_group == 'friday_night']
-    friday_night_slots.sort(key=lambda s: s.date)
-    for slot in friday_night_slots:
-        for debt, doc in _find_eligible(slot):
-            if len([a for a in assignments if a.slot_id == slot.slot_id]) >= slot.max_doctors:
-                break
-            _do_assign(slot, doc)
-            break
-
-    # Phase 4: Retry any unfilled call slots (soften max-call limits)
-    # If a call slot is still unfilled, try ALL call-eligible doctors
-    # regardless of debt score (debt=9999 means over limit, but still
-    # assign if no one else can fill it — coverage > balance)
-    assigned_call_ids = {a.slot_id for a in assignments}
-    unfilled_call_slots = [s for s in slots
-                           if s.shift_type in ('call_day', 'call_night',
-                                               'call_weekend', 'call_weekend_sun')
-                           and s.slot_id not in assigned_call_ids]
-    for slot in unfilled_call_slots:
-        p_sun_id = None
-        if slot.shift_type == 'call_weekend' and hospital_id:
-            block = next((b for b in weekend_blocks_list
-                          if b.saturday == slot.date), None)
-            if block:
-                p_sun_id = f"{block.sunday}_{hospital_id}_call_weekend_sun"
-                if p_sun_id not in slot_map:
-                    p_sun_id = None
-        for doc in inp.doctors:
-            if not doc.hospital_call_eligible:
-                continue
-            doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
-            if not _is_available(doc.id, slot, assignments, slot_map, load,
-                                 doc_map, hospital_id, doc_day_off_entries):
-                continue
-            if slot.shift_type in ('call_day', 'call_night'):
-                partner_type = 'call_night' if slot.shift_type == 'call_day' else 'call_day'
-                partner_id = f"{slot.date}_{slot.office_id}_{partner_type}"
-                if any(a.doctor_id == doc.id and a.slot_id == partner_id
-                       for a in assignments):
-                    continue
-            if p_sun_id:
-                sun_slot = slot_map[p_sun_id]
-                if not _is_available(doc.id, sun_slot, assignments, slot_map,
-                                     load, doc_map, hospital_id,
-                                     doc_day_off_entries):
-                    continue
-            _do_assign(slot, doc, p_sun_id)
-            break
-
+    # Phase 2: Surgical pairs — assign before weekday calls so capacity
+    # is reserved. Both surgical_am + surgical_hosp_pm must be same doctor.
     surgical_slots = [s for s in slots
                       if s.shift_type in ('surgical_am', 'surgical_hosp_pm')]
+    surgical_slots.sort(key=lambda s: (s.date, s.start_time))
     for slot in surgical_slots:
         existing = [a for a in assignments if a.slot_id == slot.slot_id]
         if len(existing) >= slot.max_doctors:
@@ -567,63 +559,365 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         _update_load(load, doc.id, pm_slot, hospital_id)
             break
 
-    office_shift_types = ['office_am', 'office_pm', 'office_late']
+    # Phase 3: Weekday call shifts (including friday night)
+    # For each weekday in calendar order:
+    #   a. Check for double-preference doctors first
+    #   b. Fill day call slot
+    #   c. Fill night call slot (friday_night uses balance_only)
     days = get_days_in_month(inp.year, inp.month)
-    sessions_by_doc_week = defaultdict(lambda: defaultdict(int))
+    weekday_days = [d for d in days if not d['is_weekend']]
+    for day in weekday_days:
+        date = day['date']
+        day_slot = slot_map.get(f"{date}_{hospital_id}_call_day") if hospital_id else None
+        night_slot = slot_map.get(f"{date}_{hospital_id}_call_night") if hospital_id else None
 
+        day_filled = day_slot and any(a.slot_id == day_slot.slot_id for a in assignments)
+        night_filled = night_slot and any(a.slot_id == night_slot.slot_id for a in assignments)
+
+        # Phase 3a: Double-preference check
+        if day_slot and night_slot and not day_filled and not night_filled:
+            dow = dt_class.fromisoformat(date).weekday()
+            if dow < 5:
+                for doc in inp.doctors:
+                    if not doc.hospital_call_eligible:
+                        continue
+                    if doc.call_shift_preference != 'double':
+                        continue
+                    doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
+                    if (not _is_available(doc.id, day_slot, assignments, slot_map,
+                                          load, doc_map, hospital_id, doc_day_off_entries)
+                        or not _is_available(doc.id, night_slot, assignments, slot_map,
+                                             load, doc_map, hospital_id, doc_day_off_entries)):
+                        continue
+                    if dow >= 5:
+                        continue
+                    _do_assign(day_slot, doc)
+                    _do_assign(night_slot, doc)
+                    day_filled = True
+                    night_filled = True
+                    break
+
+        # Phase 3b: Fill day call slot
+        if day_slot and not day_filled:
+            for debt, doc in _find_eligible(day_slot):
+                if len([a for a in assignments if a.slot_id == day_slot.slot_id]) >= day_slot.max_doctors:
+                    break
+                _do_assign(day_slot, doc)
+                break
+
+        # Phase 3c: Fill night call slot
+        if night_slot and not night_filled:
+            for debt, doc in _find_eligible(night_slot):
+                if len([a for a in assignments if a.slot_id == night_slot.slot_id]) >= night_slot.max_doctors:
+                    break
+                _do_assign(night_slot, doc)
+                break
+
+    # Retry any unfilled call slots (coverage > balance)
+    assigned_call_ids = {a.slot_id for a in assignments}
+    unfilled_call_slots = [s for s in slots
+                           if s.shift_type in ('call_day', 'call_night',
+                                               'call_weekend', 'call_weekend_sun')
+                           and s.slot_id not in assigned_call_ids]
+    for slot in unfilled_call_slots:
+        p_sun_id = None
+        if slot.shift_type == 'call_weekend' and hospital_id:
+            block = next((b for b in weekend_blocks_list
+                          if b.saturday == slot.date), None)
+            if block:
+                p_sun_id = f"{block.sunday}_{hospital_id}_call_weekend_sun"
+                if p_sun_id not in slot_map:
+                    p_sun_id = None
+        for doc in inp.doctors:
+            if not doc.hospital_call_eligible:
+                continue
+            doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
+            if not _is_available(doc.id, slot, assignments, slot_map, load,
+                                 doc_map, hospital_id, doc_day_off_entries):
+                continue
+            if slot.shift_type in ('call_day', 'call_night'):
+                partner_type = 'call_night' if slot.shift_type == 'call_day' else 'call_day'
+                partner_id = f"{slot.date}_{slot.office_id}_{partner_type}"
+                already_has_partner = any(a.doctor_id == doc.id and a.slot_id == partner_id
+                                          for a in assignments)
+                if already_has_partner:
+                    if doc.call_shift_preference == 'single':
+                        continue
+                slot_date = dt_class.fromisoformat(slot.date)
+                if slot_date.weekday() >= 5:
+                    continue
+            if p_sun_id:
+                sun_slot = slot_map[p_sun_id]
+                if not _is_available(doc.id, sun_slot, assignments, slot_map,
+                                     load, doc_map, hospital_id,
+                                     doc_day_off_entries):
+                    continue
+            _do_assign(slot, doc, p_sun_id)
+            break
+
+    # Phase 3.5: Post-call hospital office — assign post-call doctors to
+    # next-day hospital office AM/PM to clear H8 restriction before
+    # general office filling can take those slots.
+    if hospital_id:
+        for doc in inp.doctors:
+            for a in assignments:
+                if a.doctor_id != doc.id:
+                    continue
+                slot = slot_map[a.slot_id]
+                if slot.shift_type not in ('call_day', 'call_night',
+                                           'call_weekend', 'call_weekend_sun'):
+                    continue
+                next_day = (dt_class.fromisoformat(slot.date)
+                            + timedelta(days=1)).isoformat()
+                for ampm in ('office_am', 'office_pm'):
+                    hs_id = f"{next_day}_{hospital_id}_{ampm}"
+                    hs = slot_map.get(hs_id)
+                    if not hs:
+                        continue
+                    if sum(1 for a2 in assignments if a2.slot_id == hs_id) >= hs.max_doctors:
+                        continue
+                    doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
+                    if _is_available(doc.id, hs, assignments, slot_map,
+                                     load, doc_map, hospital_id, doc_day_off_entries):
+                        assignments.append(Assignment(doctor_id=doc.id,
+                                                      slot_id=hs_id))
+                        _update_load(load, doc.id, hs, hospital_id)
+                        break
+
+    # Phase 4: Office sessions — ranked order, proportional day-off reduction
+    office_shift_types = ['office_am', 'office_pm', 'office_late']
+    sessions_by_doc_week = defaultdict(lambda: defaultdict(int))
+    office_variety_by_doc_week = defaultdict(lambda: defaultdict(set))
+    am_by_doc_week = defaultdict(lambda: defaultdict(int))
+    pm_by_doc_week = defaultdict(lambda: defaultdict(int))
+
+    def _office_phase_key(slot_obj):
+        if slot_obj.office_id == hospital_id:
+            return (0, 0)
+        ranking = inp.global_office_ranking
+        if ranking and slot_obj.office_id in ranking:
+            return (1, ranking.index(slot_obj.office_id))
+        return (1, len(ranking))
+
+    def _is_post_call_restricted(doc_id, assignments, slot_map, hospital_id):
+        doc_assigns = sorted(
+            [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
+            key=lambda x: (x[0].date, x[0].start_time)
+        )
+        post_call_restricted = False
+        for s, _ in doc_assigns:
+            if post_call_restricted:
+                if s.shift_type in ('office_am', 'office_pm', 'office_late',
+                                    'surgical_am', 'surgical_hosp_pm'):
+                    if s.office_id == hospital_id:
+                        post_call_restricted = False
+                        continue
+            if s.shift_type in ('call_day', 'call_night',
+                                'call_weekend', 'call_weekend_sun'):
+                post_call_restricted = True
+        return post_call_restricted
+
+    for day in days:
+            if day['is_weekend'] or day['date'] in global_day_off_set:
+                continue
+            date = day['date']
+            week_num = day['week_num']
+            day_office_slots = [s for s in slots
+                                if s.date == date
+                                and s.shift_type in office_shift_types
+                                and sum(1 for a in assignments if a.slot_id == s.slot_id) < s.max_doctors]
+            day_office_slots.sort(key=lambda s: (_office_phase_key(s), s.start_time))
+
+            for slot_obj in day_office_slots:
+                current_count = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
+                if current_count >= slot_obj.max_doctors:
+                    continue
+                avail_docs = [d for d in inp.doctors
+                              if _is_available(d.id, slot_obj, assignments,
+                                               slot_map, load, doc_map,
+                                               hospital_id,
+                                               _get_day_off_entries(
+                                                   inp.day_off_dates, d.id))]
+                def _am_pm_sort_key(d):
+                    imbalance = am_by_doc_week[d.id].get(week_num, 0) - pm_by_doc_week[d.id].get(week_num, 0)
+                    is_am = 1 if slot_obj.shift_type == 'office_am' else 0
+                    is_pm = 1 if slot_obj.shift_type in ('office_pm', 'office_late') else 0
+                    if d.am_pm_preference == "balanced" and abs(imbalance) > 1:
+                        return 1 if (imbalance > 0 and is_am) or (imbalance < 0 and is_pm) else 0
+                    return 0
+
+                if slot_obj.office_id == hospital_id:
+                    avail_docs.sort(key=lambda d: (
+                        0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id) else 1,
+                        sessions_by_doc_week[d.id].get(week_num, 0),
+                        1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
+                        _am_pm_sort_key(d)))
+                else:
+                    avail_docs.sort(key=lambda d: (
+                        sessions_by_doc_week[d.id].get(week_num, 0),
+                        1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
+                        _am_pm_sort_key(d)))
+
+                for doc in avail_docs:
+                    adjusted_quota = _compute_adjusted_quota(doc, week_num, days, inp.day_off_dates)
+                    week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
+                    if week_count >= adjusted_quota:
+                        continue
+                    cur = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
+                    if cur >= slot_obj.max_doctors:
+                        break
+                    assignments.append(Assignment(doctor_id=doc.id,
+                        slot_id=slot_obj.slot_id))
+                    _update_load(load, doc.id, slot_obj, hospital_id)
+                    sessions_by_doc_week[doc.id][week_num] += 1
+                    office_variety_by_doc_week[doc.id][week_num].add(slot_obj.office_id)
+                    if slot_obj.shift_type == 'office_am':
+                        am_by_doc_week[doc.id][week_num] += 1
+                    else:
+                        pm_by_doc_week[doc.id][week_num] += 1
+                    break
+
+    # Phase 4b: Fill office slots to max_doctors (second pass)
     for day in days:
         if day['is_weekend'] or day['date'] in global_day_off_set:
             continue
         date = day['date']
         week_num = day['week_num']
+        # H8 capacity escape: if hospital office slots for this date
+        # are all full, clear post_call_since for doctors who still
+        # need a hospital slot — they can't get one today, so
+        # blocking them from non-hospital offices only starves them.
+        hosp_office_today = [s for s in slots
+            if s.date == date and s.office_id == hospital_id
+            and s.shift_type in office_shift_types]
+        if hosp_office_today:
+            all_full = all(
+                sum(1 for a in assignments
+                    if a.slot_id == hs.slot_id) >= hs.max_doctors
+                for hs in hosp_office_today)
+            if all_full:
+                for d in inp.doctors:
+                    if load[d.id].get('post_call_since') is not None:
+                        load[d.id]['post_call_since'] = None
         day_office_slots = [s for s in slots
                             if s.date == date
                             and s.shift_type in office_shift_types
-                            and not any(a.slot_id == s.slot_id
-                                        for a in assignments)]
-        hosp_slots = [s for s in day_office_slots
-                      if s.office_id == hospital_id]
-        non_hosp_slots = [s for s in day_office_slots
-                          if s.office_id != hospital_id]
-
-        for slot_obj in hosp_slots:
-            if any(a.slot_id == slot_obj.slot_id for a in assignments):
-                continue
+                            and sum(1 for a in assignments if a.slot_id == s.slot_id) < s.max_doctors]
+        day_office_slots.sort(key=lambda s: (_office_phase_key(s), s.start_time))
+        for slot_obj in day_office_slots:
+            def _am_pm_sort_key_4b(d):
+                imbalance = am_by_doc_week[d.id].get(week_num, 0) - pm_by_doc_week[d.id].get(week_num, 0)
+                is_am = 1 if slot_obj.shift_type == 'office_am' else 0
+                is_pm = 1 if slot_obj.shift_type in ('office_pm', 'office_late') else 0
+                if d.am_pm_preference == "balanced" and abs(imbalance) > 1:
+                    return 1 if (imbalance > 0 and is_am) or (imbalance < 0 and is_pm) else 0
+                return 0
             avail_docs = [d for d in inp.doctors
-                          if _is_available(d.id, slot_obj, assignments,
-                                           slot_map, load, doc_map,
-                                           hospital_id,
-                                           _get_day_off_entries(
-                                               inp.day_off_dates, d.id))]
-            avail_docs.sort(key=lambda d: sessions_by_doc_week[d.id].get(week_num, 0))
+                if _is_available(d.id, slot_obj, assignments,
+                    slot_map, load, doc_map, hospital_id,
+                    _get_day_off_entries(inp.day_off_dates, d.id))]
+            if slot_obj.office_id == hospital_id:
+                avail_docs.sort(key=lambda d: (
+                    0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id) else 1,
+                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
+                    _am_pm_sort_key_4b(d)))
+            else:
+                avail_docs.sort(key=lambda d: (
+                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
+                    _am_pm_sort_key_4b(d)))
             for doc in avail_docs:
+                adjusted_quota = _compute_adjusted_quota(doc, week_num, days, inp.day_off_dates)
                 week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
-                if week_count >= doc.required_sessions_per_week:
+                if week_count >= adjusted_quota:
                     continue
+                cur = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
+                if cur >= slot_obj.max_doctors:
+                    break
                 assignments.append(Assignment(doctor_id=doc.id,
-                                              slot_id=slot_obj.slot_id))
+                    slot_id=slot_obj.slot_id))
                 _update_load(load, doc.id, slot_obj, hospital_id)
                 sessions_by_doc_week[doc.id][week_num] += 1
-                break
+                office_variety_by_doc_week[doc.id][week_num].add(slot_obj.office_id)
+                if slot_obj.shift_type == 'office_am':
+                    am_by_doc_week[doc.id][week_num] += 1
+                else:
+                    pm_by_doc_week[doc.id][week_num] += 1
+                if cur + 1 >= slot_obj.max_doctors:
+                    break
 
-        for slot_obj in non_hosp_slots:
-            if any(a.slot_id == slot_obj.slot_id for a in assignments):
+    # Phase 5: Post-call morning assignments — clear H8 restriction
+    # by assigning hospital office AM after call. This is essential
+    # even if the doctor's weekly quota is met, because without
+    # clearing H8 the doctor will be blocked from non-hospital
+    # offices on subsequent days.
+    if hospital_id:
+        for doc in inp.doctors:
+            if doc.post_call_preference != "work":
                 continue
-            avail_docs = [d for d in inp.doctors
-                          if _is_available(d.id, slot_obj, assignments,
-                                           slot_map, load, doc_map,
-                                           hospital_id,
-                                           _get_day_off_entries(
-                                               inp.day_off_dates, d.id))]
-            avail_docs.sort(key=lambda d: sessions_by_doc_week[d.id].get(week_num, 0))
-            for doc in avail_docs:
-                week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
-                if week_count >= doc.required_sessions_per_week:
+            for a in assignments:
+                if a.doctor_id != doc.id:
                     continue
-                assignments.append(Assignment(doctor_id=doc.id,
-                                              slot_id=slot_obj.slot_id))
-                _update_load(load, doc.id, slot_obj, hospital_id)
-                sessions_by_doc_week[doc.id][week_num] += 1
+                slot = slot_map[a.slot_id]
+                if slot.shift_type not in ('call_night', 'call_day',
+                    'call_weekend', 'call_weekend_sun'):
+                    continue
+                next_day = (dt_class.fromisoformat(slot.date)
+                    + timedelta(days=1)).isoformat()
+                next_am_id = f"{next_day}_{hospital_id}_office_am"
+                next_am = slot_map.get(next_am_id)
+                if not next_am:
+                    continue
+                if sum(1 for a2 in assignments
+                       if a2.slot_id == next_am_id) >= next_am.max_doctors:
+                    continue
+                doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
+                if _is_available(doc.id, next_am, assignments, slot_map,
+                    load, doc_map, hospital_id, doc_day_off_entries):
+                    assignments.append(Assignment(doctor_id=doc.id,
+                        slot_id=next_am_id))
+                    _update_load(load, doc.id, next_am, hospital_id)
+                    day_info = next((d for d in days if d['date'] == next_day), None)
+                    if day_info:
+                        wn = day_info['week_num']
+                        sessions_by_doc_week[doc.id][wn] += 1
+                        office_variety_by_doc_week[doc.id][wn].add(hospital_id)
+                        am_by_doc_week[doc.id][wn] += 1
+
+    # Phase 6: Mon/Thu late shift balance (soft balance S3)
+    late_slots = [s for s in slots if s.shift_type == 'office_late']
+    late_slots.sort(key=lambda s: (_office_phase_key(s), s.date))
+    late_by_doc = defaultdict(int)
+    for a in assignments:
+        slot = slot_map.get(a.slot_id)
+        if slot and slot.shift_type == 'office_late':
+            late_by_doc[a.doctor_id] += 1
+
+    for slot_obj in late_slots:
+        if sum(1 for a in assignments if a.slot_id == slot_obj.slot_id) >= slot_obj.max_doctors:
+            continue
+        avail_docs = [d for d in inp.doctors
+                      if _is_available(d.id, slot_obj, assignments,
+                                       slot_map, load, doc_map,
+                                       hospital_id,
+                                       _get_day_off_entries(
+                                           inp.day_off_dates, d.id))]
+        avail_docs.sort(key=lambda d: late_by_doc.get(d.id, 0))
+        for doc in avail_docs:
+            day_info = next((dd for dd in days if dd['date'] == slot_obj.date), None)
+            if not day_info:
+                continue
+            wn = day_info['week_num']
+            assignments.append(Assignment(doctor_id=doc.id,
+                slot_id=slot_obj.slot_id))
+            _update_load(load, doc.id, slot_obj, hospital_id)
+            sessions_by_doc_week[doc.id][wn] += 1
+            late_by_doc[doc.id] += 1
+            office_variety_by_doc_week[doc.id][wn].add(slot_obj.office_id)
+            pm_by_doc_week[doc.id][wn] += 1
+            if sum(1 for a in assignments
+                   if a.slot_id == slot_obj.slot_id) >= slot_obj.max_doctors:
                 break
 
     violations = validate_schedule(inp, slots, assignments)
@@ -856,7 +1150,7 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                                 f"noov_x_{did}_{s1.slot_id}_{s2.slot_id}"
                             )
 
-    # H7: Surgical pairing
+        # H7: Surgical pairing
         _surg_pair_added = set()
         for day_item in get_days_in_month(inp.year, inp.month):
             if day_item['day_of_week'] in (1, 2, 3) and hospital_id:
@@ -944,8 +1238,27 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
 
         pref_cost = pulp.lpSum(pref_cost_terms) if pref_cost_terms else 0
 
-        balance_obj = pulp.lpSum(max_dev_terms) * 100
-        prob.setObjective(balance_obj + pref_cost)
+        max_session_dev = pulp.LpVariable("max_session_dev", lowBound=0)
+        session_eligible = inp.doctors
+        office_ilp_slots = [s for s in ilp_slots
+                            if s.shift_type in ("surgical_am", "surgical_hosp_pm")]
+        if office_ilp_slots and session_eligible:
+            sess_total_per_doc = {
+                d.id: pulp.lpSum(
+                    x.get((d.id, s.slot_id), 0) for s in office_ilp_slots
+                ) for d in session_eligible
+            }
+            sess_avg = pulp.lpSum(sess_total_per_doc.values()) / len(session_eligible)
+            for d in session_eligible:
+                if d.id in sess_total_per_doc:
+                    prob += (sess_total_per_doc[d.id] - sess_avg <= max_session_dev,
+                        f"sess_bal_upper_{d.id}")
+                    prob += (sess_avg - sess_total_per_doc[d.id] <= max_session_dev,
+                        f"sess_bal_lower_{d.id}")
+
+        balance_obj = pulp.lpSum(max_dev_terms) * 10
+        session_balance_obj = max_session_dev * 5
+        prob.setObjective(balance_obj + session_balance_obj + pref_cost)
 
         # Solve
         solver = pulp.PULP_CBC_CMD(
@@ -997,77 +1310,123 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
 
         days = get_days_in_month(inp.year, inp.month)
         sessions_by_doc_week = defaultdict(lambda: defaultdict(int))
+        office_variety_ilp = defaultdict(lambda: defaultdict(set))
 
         office_shift_types = ["office_am", "office_pm", "office_late"]
-        prev_date_calls_activated = set()
+        ranking = inp.global_office_ranking
+
+        def _ilp_office_phase_key(slot_obj):
+            if slot_obj.office_id == hospital_id:
+                return (0, 0)
+            if ranking and slot_obj.office_id in ranking:
+                return (1, ranking.index(slot_obj.office_id))
+            return (1, len(ranking) if ranking else 0)
+
+        all_sorted_dates = sorted(ilp_by_date.keys())
+        prev_date_replayed = set()
         for day in days:
             if day['is_weekend'] or day['date'] in global_day_off_set:
                 continue
             date = day['date']
             week_num = day['week_num']
-            for prev_date in sorted(ilp_by_date.keys()):
+            for prev_date in all_sorted_dates:
                 if prev_date >= date:
                     break
-                if prev_date not in prev_date_calls_activated:
+                if prev_date not in prev_date_replayed:
                     for a in ilp_by_date[prev_date]:
                         slot = slot_map.get(a.slot_id)
-                        if slot and slot.shift_type in ("call_day", "call_night",
-                            "call_weekend", "call_weekend_sun"):
+                        if slot:
                             _update_load(load, a.doctor_id, slot, hospital_id)
-                    prev_date_calls_activated.add(prev_date)
-        day_office_slots = [s for s in slots
-                            if s.date == date
-                            and s.shift_type in office_shift_types
-                            and not any(a.slot_id == s.slot_id
-                                        for a in assignments)]
-        hosp_slots = [s for s in day_office_slots
-                      if s.office_id == hospital_id]
-        non_hosp_slots = [s for s in day_office_slots
-                          if s.office_id != hospital_id]
-        for slot_obj in hosp_slots:
-            if any(a.slot_id == slot_obj.slot_id for a in assignments):
-                continue
-            avail_docs = [d for d in inp.doctors
-                          if is_avail(d.id, slot_obj)]
-            avail_docs.sort(
-                key=lambda d: sessions_by_doc_week[d.id].get(week_num, 0))
-            for doc in avail_docs:
-                doc_day_off_set = _get_day_off_set(day_off_dates, doc.id)
-                day_off_weekdays = sum(
-                    1 for d in doc_day_off_set
-                    if d.startswith(
-                        f"{inp.year}-{str(inp.month + 1).zfill(2)}"))
-                adjusted_quota = max(
-                    0, doc.required_sessions_per_week - day_off_weekdays)
-                week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
-                if week_count >= adjusted_quota:
-                    continue
-                assign(doc.id, slot_obj)
-                sessions_by_doc_week[doc.id][week_num] += 1
-                break
-        for slot_obj in non_hosp_slots:
-            if any(a.slot_id == slot_obj.slot_id for a in assignments):
-                continue
-            avail_docs = [d for d in inp.doctors
-                          if is_avail(d.id, slot_obj)]
-            avail_docs.sort(
-                key=lambda d: sessions_by_doc_week[d.id].get(week_num, 0))
-            for doc in avail_docs:
-                doc_day_off_set = _get_day_off_set(day_off_dates, doc.id)
-                day_off_weekdays = sum(
-                    1 for d in doc_day_off_set
-                    if d.startswith(
-                        f"{inp.year}-{str(inp.month + 1).zfill(2)}"))
-                adjusted_quota = max(
-                    0, doc.required_sessions_per_week - day_off_weekdays)
-                week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
-                if week_count >= adjusted_quota:
-                    continue
-                assign(doc.id, slot_obj)
-                sessions_by_doc_week[doc.id][week_num] += 1
-                break
+                    prev_date_replayed.add(prev_date)
+            # Phase 3.5: Post-call hospital office — assign post-call
+            # doctors to next-day hospital office AM/PM before general
+            # office filling, so H8 gets cleared and non-hospital slots
+            # remain available for the next post-call doctor.
+            if hospital_id:
+                for doc in inp.doctors:
+                    if load[doc.id]['post_call_since'] is None:
+                        continue
+                    for ampm in ('office_am', 'office_pm'):
+                        hs_id = f"{date}_{hospital_id}_{ampm}"
+                        hs = slot_map.get(hs_id)
+                        if not hs:
+                            continue
+                        if sum(1 for a2 in assignments
+                               if a2.slot_id == hs_id) >= hs.max_doctors:
+                            continue
+                        if is_avail(doc.id, hs):
+                            assign(doc.id, hs)
+                            sessions_by_doc_week[doc.id][week_num] += 1
+                            office_variety_ilp[doc.id][week_num].add(hs.office_id)
+                            break
+            # H8 capacity escape: if hospital office slots for this date
+            # are all full, clear post_call_since for doctors who still
+            # need a hospital slot — they can't get one today, so
+            # blocking them from non-hospital offices only starves them.
+            if hospital_id:
+                hosp_office_today = [s for s in slots
+                    if s.date == date and s.office_id == hospital_id
+                    and s.shift_type in office_shift_types]
+                if hosp_office_today:
+                    all_full = all(
+                        sum(1 for a in assignments
+                            if a.slot_id == hs.slot_id) >= hs.max_doctors
+                        for hs in hosp_office_today)
+                    if all_full:
+                        for d in inp.doctors:
+                            if load[d.id].get('post_call_since') is not None:
+                                load[d.id]['post_call_since'] = None
+            day_office_slots = [s for s in slots
+                if s.date == date
+                and s.shift_type in office_shift_types
+                and sum(1 for a in assignments
+                        if a.slot_id == s.slot_id) < s.max_doctors]
+            hosp_slots = [s for s in day_office_slots
+                if s.office_id == hospital_id]
+            non_hosp_slots = [s for s in day_office_slots
+                if s.office_id != hospital_id]
+            for slot_obj in hosp_slots:
+                avail_docs = [d for d in inp.doctors
+                    if is_avail(d.id, slot_obj)]
+                avail_docs.sort(key=lambda d: (
+                    0 if load[d.id]['post_call_since'] is not None else 1,
+                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0))
+                for doc in avail_docs:
+                    adjusted_quota = _compute_adjusted_quota(doc, week_num, days, day_off_dates)
+                    week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
+                    if week_count >= adjusted_quota:
+                        continue
+                    cur = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
+                    if cur >= slot_obj.max_doctors:
+                        break
+                    assign(doc.id, slot_obj)
+                    sessions_by_doc_week[doc.id][week_num] += 1
+                    office_variety_ilp[doc.id][week_num].add(slot_obj.office_id)
+                    if cur + 1 >= slot_obj.max_doctors:
+                        break
+            for slot_obj in non_hosp_slots:
+                avail_docs = [d for d in inp.doctors
+                    if is_avail(d.id, slot_obj)]
+                avail_docs.sort(key=lambda d: (
+                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0))
+                for doc in avail_docs:
+                    adjusted_quota = _compute_adjusted_quota(doc, week_num, days, day_off_dates)
+                    week_count = sessions_by_doc_week[doc.id].get(week_num, 0)
+                    if week_count >= adjusted_quota:
+                        continue
+                    cur = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
+                    if cur >= slot_obj.max_doctors:
+                        break
+                    assign(doc.id, slot_obj)
+                    sessions_by_doc_week[doc.id][week_num] += 1
+                    office_variety_ilp[doc.id][week_num].add(slot_obj.office_id)
+                    if cur + 1 >= slot_obj.max_doctors:
+                        break
 
-        # Post-call morning assignments (soft S4)
+        # Post-call morning assignments — clear H8 (essential even if
+        # quota met, same rationale as greedy Phase 5)
         for doc in inp.doctors:
             if doc.post_call_preference != "work":
                 continue
@@ -1075,23 +1434,56 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                 if a.doctor_id != doc.id:
                     continue
                 slot = slot_map[a.slot_id]
-                if slot.shift_type != "call_night":
+                if slot.shift_type not in ('call_night', 'call_day',
+                    'call_weekend', 'call_weekend_sun'):
                     continue
                 next_day = (dt_class.fromisoformat(slot.date)
-                            + timedelta(days=1)).isoformat()
-                next_am = get_slot_by_id(
-                    slots, f"{next_day}_{hospital_id}_office_am")
-                if next_am and not any(
-                        a2.slot_id == next_am.slot_id for a2 in assignments):
-                    if is_avail(doc.id, next_am):
-                        for d in days:
-                            if d['date'] == next_day:
-                                wn = d['week_num']
-                                if sessions_by_doc_week[doc.id].get(
-                                        wn, 0) < doc.required_sessions_per_week:
-                                    assign(doc.id, next_am)
-                                    sessions_by_doc_week[doc.id][wn] += 1
-                                break
+                    + timedelta(days=1)).isoformat()
+                next_am_id = f"{next_day}_{hospital_id}_office_am"
+                next_am = slot_map.get(next_am_id)
+                if not next_am:
+                    continue
+                if sum(1 for a2 in assignments
+                       if a2.slot_id == next_am_id) >= next_am.max_doctors:
+                    continue
+                if is_avail(doc.id, next_am):
+                    assign(doc.id, next_am)
+                    for d in days:
+                        if d['date'] == next_day:
+                            wn = d['week_num']
+                            sessions_by_doc_week[doc.id][wn] += 1
+                            office_variety_ilp[doc.id][wn].add(hospital_id)
+                            break
+
+        # Late shift balance (S3) — Mon/Thu office_late distribution
+        late_slots = [s for s in slots if s.shift_type == 'office_late']
+        late_slots.sort(key=lambda s: (_ilp_office_phase_key(s), s.date))
+        late_by_doc = defaultdict(int)
+        for a in assignments:
+            sl = slot_map.get(a.slot_id)
+            if sl and sl.shift_type == 'office_late':
+                late_by_doc[a.doctor_id] += 1
+        for slot_obj in late_slots:
+            if sum(1 for a in assignments
+                   if a.slot_id == slot_obj.slot_id) >= slot_obj.max_doctors:
+                continue
+            avail_docs = [d for d in inp.doctors
+                if is_avail(d.id, slot_obj)]
+            if not avail_docs:
+                continue
+            avail_docs.sort(key=lambda d: late_by_doc.get(d.id, 0))
+            for doc in avail_docs:
+                assign(doc.id, slot_obj)
+                late_by_doc[doc.id] += 1
+                for d in days:
+                    if d['date'] == slot_obj.date:
+                        wn = d['week_num']
+                        sessions_by_doc_week[doc.id][wn] += 1
+                        office_variety_ilp[doc.id][wn].add(slot_obj.office_id)
+                        break
+                if sum(1 for a in assignments
+                       if a.slot_id == slot_obj.slot_id) >= slot_obj.max_doctors:
+                    break
 
         # Finalize
         violations = validate_schedule(inp, slots, assignments)
