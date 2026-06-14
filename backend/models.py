@@ -49,6 +49,7 @@ class DoctorProfile:
     required_sessions_per_week: int = 5
     hospital_call_eligible: bool = True
     surgical_assist_eligible: bool = True
+    weekend_call_off: bool = False
     max_weekday_day_calls: int = 5
     max_weekday_night_calls: int = 5
     max_friday_night_calls: int = 2
