@@ -9,3 +9,6 @@ handoff/
 session-*.md
 .agents/
 skills-lock.json
+.pytest_cache/
+node_modules/
+.env
