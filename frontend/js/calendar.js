@@ -312,7 +312,7 @@ function buildBlackoutGridHTML(year, month, doctorId) {
   entriesByDate[e.date].push(e);
  }
 
- let html = '<div class="blackout-grid">';
+ let html = '<div class="blackout-grid" data-doctor-id="' + escapeHtml(doctorId) + '">';
  for (const dn of DAY_NAMES) html += `<div class="blackout-cell header">${dn}</div>`;
  for (let i = 0; i < FIRST_DOW; i++) html += '<div class="blackout-cell"></div>';
  for (let d = 1; d <= DAYS_IN_MONTH; d++) {
@@ -334,7 +334,7 @@ function buildBlackoutGridHTML(year, month, doctorId) {
   } else {
    cls += ' free';
   }
-  const handler = !isWeekend ? `onclick="handleBlackoutCellClick('${doctorId}', '${dateStr}', this, event)"` : '';
+  const clickable = !isWeekend ? ' role="button" tabindex="0"' : '';
   let dotsHTML = '';
   if (!isWeekend && dateEntries.length > 0) {
    const periods = dateEntries.map(e => e.period);
@@ -345,7 +345,7 @@ function buildBlackoutGridHTML(year, month, doctorId) {
    }
    dotsHTML += '</div>';
   }
-  html += `<div class="${cls}" data-date="${dateStr}" ${handler}>${d}${dotsHTML}</div>`;
+  html += `<div class="${cls}" data-date="${dateStr}"${clickable}>${d}${dotsHTML}</div>`;
  }
  html += '</div>';
  return html;
