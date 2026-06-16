@@ -397,6 +397,10 @@ def _compute_adjusted_quota(doc, week_num, days, day_off_dates):
         day_info = next((d for d in days if d['date'] == d_str), None)
         if day_info and day_info['week_num'] == week_num:
             reduction += 1
+    week_days = [d for d in days if d['week_num'] == week_num and not d['is_weekend']]
+    n_weekdays = max(len(week_days), 1)
+    if n_weekdays < 5:
+        reduction += (5 - n_weekdays)
     adj = doc.required_sessions_per_week - int(reduction * doc.required_sessions_per_week / 5)
     return max(0, adj)
 
@@ -535,26 +539,28 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
     surgical_slots = [s for s in slots
                       if s.shift_type in ('surgical_am', 'surgical_hosp_pm')]
     surgical_slots.sort(key=lambda s: (s.date, s.start_time))
+    surgical_count = defaultdict(int)
     for slot in surgical_slots:
         existing = [a for a in assignments if a.slot_id == slot.slot_id]
         if len(existing) >= slot.max_doctors:
             continue
-        for doc in inp.doctors:
-            if not doc.surgical_assist_eligible:
-                continue
-            doc_day_off_entries = _get_day_off_entries(inp.day_off_dates, doc.id)
-            if not _is_available(doc.id, slot, assignments, slot_map, load,
-                                 doc_map, hospital_id, doc_day_off_entries):
-                continue
+        eligible = [d for d in inp.doctors
+                    if d.surgical_assist_eligible
+                    and _is_available(d.id, slot, assignments, slot_map, load,
+                                      doc_map, hospital_id,
+                                      _get_day_off_entries(inp.day_off_dates, d.id))]
+        eligible.sort(key=lambda d: surgical_count[d.id])
+        for doc in eligible:
             assignments.append(Assignment(doctor_id=doc.id, slot_id=slot.slot_id))
             _update_load(load, doc.id, slot, hospital_id)
+            surgical_count[doc.id] += 1
             if slot.shift_type == 'surgical_am':
                 pm_id = slot.slot_id.replace('surgical_am', 'surgical_hosp_pm')
                 pm_slot = slot_map.get(pm_id)
                 if pm_slot and not any(a.slot_id == pm_id for a in assignments):
                     if _is_available(doc.id, pm_slot, assignments, slot_map,
                                      load, doc_map, hospital_id,
-                                     doc_day_off_entries):
+                                     _get_day_off_entries(inp.day_off_dates, doc.id)):
                         assignments.append(Assignment(doctor_id=doc.id, slot_id=pm_id))
                         _update_load(load, doc.id, pm_slot, hospital_id)
             break
@@ -691,6 +697,20 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
     am_by_doc_week = defaultdict(lambda: defaultdict(int))
     pm_by_doc_week = defaultdict(lambda: defaultdict(int))
 
+    for a in assignments:
+        s = slot_map.get(a.slot_id)
+        if not s or s.shift_type not in office_shift_types:
+            continue
+        day_info = next((d for d in days if d['date'] == s.date), None)
+        if not day_info:
+            continue
+        wn = day_info['week_num']
+        office_variety_by_doc_week[a.doctor_id][wn].add(s.office_id)
+        if s.shift_type == 'office_am':
+            am_by_doc_week[a.doctor_id][wn] += 1
+        else:
+            pm_by_doc_week[a.doctor_id][wn] += 1
+
     def _office_phase_key(slot_obj):
         if slot_obj.office_id == hospital_id:
             return (0, 0)
@@ -726,7 +746,7 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                                 if s.date == date
                                 and s.shift_type in office_shift_types
                                 and sum(1 for a in assignments if a.slot_id == s.slot_id) < s.max_doctors]
-            day_office_slots.sort(key=lambda s: (_office_phase_key(s), s.start_time))
+            day_office_slots.sort(key=lambda s: (0 if s.shift_type == 'office_am' else 1, 1 if s.office_id == hospital_id else 0, _office_phase_key(s), s.start_time))
 
             for slot_obj in day_office_slots:
                 current_count = sum(1 for a in assignments if a.slot_id == slot_obj.slot_id)
@@ -740,8 +760,8 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                                                    inp.day_off_dates, d.id))]
                 def _am_pm_sort_key(d):
                     imbalance = am_by_doc_week[d.id].get(week_num, 0) - pm_by_doc_week[d.id].get(week_num, 0)
-                    is_am = 1 if slot_obj.shift_type == 'office_am' else 0
-                    is_pm = 1 if slot_obj.shift_type in ('office_pm', 'office_late') else 0
+                    is_am = slot_obj.shift_type == 'office_am'
+                    is_pm = slot_obj.shift_type in ('office_pm', 'office_late')
                     if d.am_pm_preference == "balanced" and abs(imbalance) > 1:
                         return 1 if (imbalance > 0 and is_am) or (imbalance < 0 and is_pm) else 0
                     return 0
@@ -749,14 +769,16 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                 if slot_obj.office_id == hospital_id:
                     avail_docs.sort(key=lambda d: (
                         0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id) else 1,
-                        sessions_by_doc_week[d.id].get(week_num, 0),
+                        _am_pm_sort_key(d),
                         1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
-                        _am_pm_sort_key(d)))
+                        len(office_variety_by_doc_week[d.id].get(week_num, set())),
+                        sessions_by_doc_week[d.id].get(week_num, 0)))
                 else:
                     avail_docs.sort(key=lambda d: (
-                        sessions_by_doc_week[d.id].get(week_num, 0),
+                        _am_pm_sort_key(d),
                         1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
-                        _am_pm_sort_key(d)))
+                        len(office_variety_by_doc_week[d.id].get(week_num, set())),
+                        sessions_by_doc_week[d.id].get(week_num, 0)))
 
                 for doc in avail_docs:
                     adjusted_quota = _compute_adjusted_quota(doc, week_num, days, inp.day_off_dates)
@@ -803,7 +825,7 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                             if s.date == date
                             and s.shift_type in office_shift_types
                             and sum(1 for a in assignments if a.slot_id == s.slot_id) < s.max_doctors]
-        day_office_slots.sort(key=lambda s: (_office_phase_key(s), s.start_time))
+        day_office_slots.sort(key=lambda s: (0 if s.shift_type == 'office_am' else 1, 1 if s.office_id == hospital_id else 0, _office_phase_key(s), s.start_time))
         for slot_obj in day_office_slots:
             def _am_pm_sort_key_4b(d):
                 imbalance = am_by_doc_week[d.id].get(week_num, 0) - pm_by_doc_week[d.id].get(week_num, 0)
@@ -819,14 +841,16 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             if slot_obj.office_id == hospital_id:
                 avail_docs.sort(key=lambda d: (
                     0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id) else 1,
-                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    _am_pm_sort_key_4b(d),
                     1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
-                    _am_pm_sort_key_4b(d)))
+                    len(office_variety_by_doc_week[d.id].get(week_num, set())),
+                    sessions_by_doc_week[d.id].get(week_num, 0)))
             else:
                 avail_docs.sort(key=lambda d: (
-                    sessions_by_doc_week[d.id].get(week_num, 0),
+                    _am_pm_sort_key_4b(d),
                     1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
-                    _am_pm_sort_key_4b(d)))
+                    len(office_variety_by_doc_week[d.id].get(week_num, set())),
+                    sessions_by_doc_week[d.id].get(week_num, 0)))
             for doc in avail_docs:
                 adjusted_quota = _compute_adjusted_quota(doc, week_num, days, inp.day_off_dates)
                 week_count = sessions_by_doc_week[doc.id].get(week_num, 0)

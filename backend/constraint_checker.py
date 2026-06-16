@@ -59,7 +59,7 @@ def validate_schedule(
     violations += check_h12_required_sessions(inp.doctors, known_assignments, slot_map, inp.day_off_dates, inp.year, inp.month, inp.offices)
     violations += check_h13_late_shift_distinctness(slots, known_assignments, slot_map)
     violations += check_s1_am_pm_balance(inp.doctors, known_assignments, slot_map, inp.year, inp.month)
-    violations += check_s2_office_ranking(inp.doctors, known_assignments, slot_map, inp.global_office_ranking)
+    violations += check_s2_office_ranking(inp.doctors, known_assignments, slot_map, inp.global_office_ranking, inp.day_off_dates, inp.offices)
     violations += check_s3_late_shift_balance(inp.doctors, known_assignments, slot_map, inp.year, inp.month, inp.day_off_dates, inp.offices)
     violations += check_s4_post_call_work_preference(inp.doctors, known_assignments, slot_map, inp.offices)
     violations += check_s5_call_shift_preference(inp.doctors, known_assignments, slot_map)
@@ -790,6 +790,11 @@ def check_h12_required_sessions(
             week_sessions = sessions_by_week.get(wn, 0)
             day_offs = day_off_count_by_week.get(wn, 0)
 
+            week_days = [d for d in days if d['week_num'] == wn and not d['is_weekend']]
+            n_weekdays = len(week_days)
+            if n_weekdays < 5:
+                day_offs += (5 - n_weekdays)
+
             work_days_in_week = 5 - day_offs
             if work_days_in_week <= 0:
                 continue
@@ -936,26 +941,78 @@ def check_s2_office_ranking(
     doctors: List[DoctorProfile],
     assignments: List[Assignment],
     slot_map: Dict[str, ShiftSlot],
-    global_office_ranking: List[str]
+    global_office_ranking: List[str],
+    day_off_dates=None,
+    offices: List[Office] = None
 ) -> List[ConstraintViolation]:
     """
     S2: Fill higher-ranked offices before lower-ranked.
     Each doctor has their own ranked preference list, falling back to global default.
     Flags if a doctor is assigned to a lower-ranked office on a date where
     a higher-ranked office has an open slot of the same shift type.
+    Skips if the doctor was not actually available for the higher-ranked slot.
     """
     violations = []
     if not global_office_ranking:
         return violations
 
+    SHIFT_TIMES_LOCAL = {
+        "office_am": ("08:00", "12:00"),
+        "office_pm": ("13:00", "17:00"),
+        "office_late": ("13:30", "18:30"),
+        "call_day": ("07:00", "19:00"),
+        "call_night": ("19:00", "07:00"),
+        "surgical_am": ("07:00", "12:00"),
+        "surgical_hosp_pm": ("13:00", "17:00"),
+    }
+
+    def _to_min(t):
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+
+    def _times_overlap_local(s1, e1, s2, e2):
+        a1, b1 = _to_min(s1), _to_min(e1)
+        a2, b2 = _to_min(s2), _to_min(e2)
+        if a1 > a2:
+            a1, b1, a2, b2 = a2, b2, a1, b1
+        return b1 > a2
+
+    hospital_id = None
+    if offices:
+        for o in offices:
+            if o.is_hospital:
+                hospital_id = o.id
+                break
+
+    doc_day_off_dates = {}
+    if day_off_dates is not None:
+        if isinstance(day_off_dates, dict):
+            for did, entries in day_off_dates.items():
+                doc_day_off_dates[did] = set()
+                for e in entries:
+                    if isinstance(e, str):
+                        doc_day_off_dates[did].add(e)
+                    elif isinstance(e, dict):
+                        doc_day_off_dates[did].add(e.get("date", ""))
+        else:
+            for did in [d.id for d in doctors]:
+                doc_day_off_dates[did] = set()
+                for e in day_off_dates:
+                    if isinstance(e, str):
+                        doc_day_off_dates[did].add(e)
+                    elif isinstance(e, dict):
+                        doc_day_off_dates[did].add(e.get("date", ""))
+
     a_by_slot = {}
+    doc_assignments_by_id = {}
     for a in assignments:
         a_by_slot.setdefault(a.slot_id, []).append(a.doctor_id)
+        doc_assignments_by_id.setdefault(a.doctor_id, []).append(a)
 
     for doc in doctors:
         ranking = doc.office_preferences if doc.office_preferences else global_office_ranking
 
-        doc_assignments = [a for a in assignments if a.doctor_id == doc.id]
+        doc_assignments = doc_assignments_by_id.get(doc.id, [])
         for a in doc_assignments:
             slot = slot_map[a.slot_id]
             if slot.shift_type not in OFFICE_SESSION_TYPES:
@@ -974,6 +1031,47 @@ def check_s2_office_ranking(
                 if better_count < better_slot.max_doctors:
                     if doc.allowed_offices is not None and better_office not in doc.allowed_offices:
                         continue
+
+                    if slot.date in doc_day_off_dates.get(doc.id, set()):
+                        continue
+
+                    dow = dt_class.fromisoformat(slot.date).weekday()
+                    if dow in doc.standing_days_off:
+                        continue
+
+                    bt = SHIFT_TIMES_LOCAL.get(better_slot.shift_type)
+                    if bt:
+                        overlap = False
+                        for oa in doc_assignments:
+                            other = slot_map.get(oa.slot_id)
+                            if not other or other.date != better_slot.date:
+                                continue
+                            ot = SHIFT_TIMES_LOCAL.get(other.shift_type)
+                            if not ot:
+                                continue
+                            if _times_overlap_local(bt[0], bt[1], ot[0], ot[1]):
+                                overlap = True
+                                break
+                        if overlap:
+                            continue
+
+                    if hospital_id and better_office != hospital_id:
+                        doc_sorted = sorted(
+                            [(slot_map[oa.slot_id], oa) for oa in doc_assignments],
+                            key=lambda x: (x[0].date, x[0].start_time))
+                        post_call = False
+                        for sl, _ in doc_sorted:
+                            if sl.date > better_slot.date:
+                                break
+                            if sl.shift_type in CALL_SHIFT_TYPES:
+                                if sl.date < better_slot.date or (sl.date == better_slot.date and sl.shift_type in ("call_night",)):
+                                    post_call = True
+                            if post_call and sl.shift_type in CLEARING_SHIFT_TYPES:
+                                if sl.office_id == hospital_id:
+                                    post_call = False
+                        if post_call:
+                            continue
+
                     violations.append(ConstraintViolation(
                         constraint_id = "S2",
                         constraint_name = "Office ranking",
@@ -1179,7 +1277,7 @@ def check_s4_post_call_work_preference(
 
             if doc.post_call_preference == "work":
                 has_hosp_am = any(
-                    s.shift_type == "office_am" and s.office_id == hospital_id
+                    s.shift_type in ("office_am", "surgical_am") and s.office_id == hospital_id
                     for s, _ in next_day_assignments
                 )
                 if next_day_assignments and not has_hosp_am:
