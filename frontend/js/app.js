@@ -13,11 +13,84 @@ function showToast(msg, duration = 2500) {
   c.appendChild(t);
   setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 250); }, duration);
 }
+
+function alertMsg(msg) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box">
+      <div class="modal-body">${escapeHtml(msg)}</div>
+      <div class="modal-actions"><button class="btn btn-primary modal-ok">OK</button></div>
+    </div>`;
+    document.body.appendChild(overlay);
+    const ok = overlay.querySelector('.modal-ok');
+    const close = () => { overlay.remove(); resolve(); };
+    ok.addEventListener('click', close);
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+    ok.focus();
+  });
+}
+
+function confirmAction(msg) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `<div class="modal-box">
+      <div class="modal-body">${escapeHtml(msg)}</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost modal-cancel">Cancel</button>
+        <button class="btn btn-danger modal-confirm">Confirm</button>
+      </div>
+    </div>`;
+    document.body.appendChild(overlay);
+    const confirm = overlay.querySelector('.modal-confirm');
+    const cancel = overlay.querySelector('.modal-cancel');
+    const done = (val) => { overlay.remove(); resolve(val); };
+    confirm.addEventListener('click', () => done(true));
+    cancel.addEventListener('click', () => done(false));
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') done(false); });
+    cancel.focus();
+  });
+}
 let currentScheduleYear = new Date().getFullYear();
 let currentScheduleMonth = new Date().getMonth();
 let wizViewYear = currentScheduleYear;
 let wizViewMonth = currentScheduleMonth;
 let wizardStep = 1;
+
+let _undoSnapshot = null;
+let _undoTimer = null;
+
+function _saveUndoSnapshot() {
+  _undoSnapshot = structuredClone ? structuredClone(STATE) : JSON.parse(JSON.stringify(STATE));
+}
+
+function _clearUndo() {
+  _undoSnapshot = null;
+  clearTimeout(_undoTimer);
+  _undoTimer = null;
+}
+
+function performUndo() {
+  if (!_undoSnapshot) return;
+  STATE = _undoSnapshot;
+  _undoSnapshot = null;
+  clearTimeout(_undoTimer);
+  _undoTimer = null;
+  saveState();
+  refreshUI();
+  showToast('Action undone');
+}
+
+function _showUndoToast(msg, duration = 5000) {
+  const c = document.getElementById('toast-container');
+  if (!c) return;
+  const t = document.createElement('div');
+  t.className = 'toast toast-undo';
+  t.innerHTML = `<span>${escapeHtml(msg)}</span> <button class="btn btn-sm btn-ghost toast-undo-btn" onclick="performUndo(); this.closest('.toast').remove()">Undo</button>`;
+  c.appendChild(t);
+  _undoTimer = setTimeout(() => { t.classList.add('toast-out'); setTimeout(() => t.remove(), 250); _undoSnapshot = null; }, duration);
+}
 
 // ── Wizard ──────────────────────────────────────────────────────────────────
 
@@ -276,6 +349,9 @@ function quickAddDoctor() {
   const input = document.getElementById('quick-add-doctor-name');
   const name = input ? input.value.trim() : '';
   if (!name) { if (input) input.focus(); return; }
+  if (STATE.doctors.some(d => d.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Doctor already exists'); return;
+  }
   const doc = defaultStateDoctor();
   doc.name = name;
   STATE.doctors.push(doc);
@@ -289,10 +365,11 @@ function quickAddDoctor() {
   showToast(`Added ${name}`);
 }
 
-function removeDoctor(id) {
+async function removeDoctor(id) {
   const doc = STATE.doctors.find(d => d.id === id);
   const name = doc ? doc.name : 'this doctor';
-  if (!confirm(`Remove ${name}? This will also clear their time-off data.`)) return;
+  if (!(await confirmAction(`Remove ${name}? This will also clear their time-off data.`))) return;
+  _saveUndoSnapshot();
   STATE.doctors = STATE.doctors.filter(d => d.id !== id);
   for (const mk of Object.keys(STATE.blackouts)) {
     delete STATE.blackouts[mk][id];
@@ -303,7 +380,9 @@ function removeDoctor(id) {
   renderDoctorAccordion();
   updateWizardSummary();
   updateBlackoutDoctorSelect();
+  refreshBlackoutCalendar();
   renderQuickSetupSummary();
+  _showUndoToast(`${name} removed`);
 }
 
 function addOffice() {
@@ -324,6 +403,9 @@ function quickAddOffice() {
   const input = document.getElementById('quick-add-office-name');
   const name = input ? input.value.trim() : '';
   if (!name) { if (input) input.focus(); return; }
+  if (STATE.offices.some(o => o.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Office already exists'); return;
+  }
   const id = 'off_' + generateId().slice(0, 5);
   const office = {
     id, name, isHospital: STATE.offices.length === 0,
@@ -348,15 +430,18 @@ function updateOfficeField(officeId, field, value) {
     updateWizardSummary();
 }
 
-function removeOffice(id) {
+async function removeOffice(id) {
   const off = STATE.offices.find(o => o.id === id);
   const name = off ? off.name : 'this office';
-  if (!confirm(`Remove ${name}?`)) return;
+  if (!(await confirmAction(`Remove ${name}?`))) return;
+  _saveUndoSnapshot();
   STATE.offices = STATE.offices.filter(o => o.id !== id);
   saveState();
   renderWizardOffices();
   updateWizardSummary();
   renderQuickSetupSummary();
+  renderDoctorAccordion();
+  _showUndoToast(`${name} removed`);
 }
 
 function openDoctorAccordion(docId) {
@@ -401,6 +486,8 @@ function validateCallEligibility() {
   return null;
 }
 
+let _generateLock = false;
+
 async function handleGenerate() {
   const year = parseInt(document.getElementById('wiz-year')?.value || 2026);
   const month = parseInt(document.getElementById('wiz-month')?.value || 8);
@@ -408,6 +495,7 @@ async function handleGenerate() {
   const statusEl = document.getElementById('gen-status');
   const btn = document.getElementById('btn-generate');
 
+  if (_generateLock) return;
   if (isNaN(year) || year < 2020 || year > 2099) {
     statusEl.innerHTML = '<span class="err">Enter a valid year (2020-2099).</span>';
     document.getElementById('wiz-year')?.focus();
@@ -427,6 +515,7 @@ async function handleGenerate() {
 
   statusEl.innerHTML = '<span class="gen-loading"><span class="spinner"></span> Generating schedule…</span>';
   if (btn) btn.disabled = true;
+  _generateLock = true;
   const panel = document.getElementById('conflict-panel');
   const list = document.getElementById('conflict-list');
   panel?.classList.add('hidden');
@@ -478,6 +567,7 @@ async function handleGenerate() {
     }
     console.error(err);
   } finally {
+    _generateLock = false;
     if (btn) btn.disabled = false;
   }
 }
@@ -551,10 +641,11 @@ function changeScheduleMonth(delta) {
   updateCalendarView();
 }
 
-function handleClearMonth() {
+async function handleClearMonth() {
   const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
   if (!STATE.schedules[mk]) return;
-  if (!confirm('Clear the schedule for ' + MONTHS[currentScheduleMonth] + ' ' + currentScheduleYear + '? This cannot be undone.')) return;
+  if (!(await confirmAction('Clear the schedule for ' + MONTHS[currentScheduleMonth] + ' ' + currentScheduleYear + '?'))) return;
+  _saveUndoSnapshot();
   delete STATE.schedules[mk];
   updateTotalsFromSchedule({});
   saveState();
@@ -568,6 +659,7 @@ function handleClearMonth() {
     if (wizPreview) wizPreview.classList.add('hidden');
     updateWizScheduleDisplay(null);
   }
+  _showUndoToast('Schedule cleared');
 }
 
 function updateScheduleControls() {
@@ -615,7 +707,8 @@ function updateBalanceTable() {
         for (const o of nonHosp) {
             html += `<td>${visits[o.id] || 0}</td>`;
         }
-        const mc = Object.values(STATE.schedules).pop()?.counts?.[doc.id];
+        const latestMk = Object.keys(STATE.schedules).sort().pop();
+        const mc = latestMk ? STATE.schedules[latestMk]?.counts?.[doc.id] : null;
         const prefRate = mc?.preferredDayCallRate;
         html += `<td>${prefRate != null ? (prefRate * 100).toFixed(0) + '%' : '—'}</td>`;
         html += '</tr>';
@@ -728,16 +821,18 @@ function handleImportDoctors(file) {
 					oneTimeOverrides: [],
 				});
 			}
-			if (!imported.length) { alert('No valid doctors found.'); return; }
-			STATE.doctors = imported;
+			if (!imported.length) { alertMsg('No valid doctors found.'); return; }
+			const importedIds = new Set(imported.map(d => d.id));
+			const kept = STATE.doctors.filter(d => !importedIds.has(d.id));
+			STATE.doctors = [...kept, ...imported];
 			saveState();
 			renderWizardDoctors();
 			renderDoctorAccordion();
 			updateWizardSummary();
 			updateBlackoutDoctorSelect();
 			updateBalanceTable();
-			alert(`Imported ${imported.length} doctor(s)`);
-		} catch (err) { alert('Import failed: ' + err.message); }
+			alertMsg(`Imported ${imported.length} doctor(s)`);
+		} catch (err) { alertMsg('Import failed: ' + err.message); }
 	};
 	reader.readAsText(file);
 }
@@ -760,14 +855,16 @@ function handleImportOffices(file) {
 					locationAddress: row.locationAddress || row.location_address || '',
 				});
 			}
-			if (!imported.length) { alert('No valid offices found.'); return; }
+			if (!imported.length) { alertMsg('No valid offices found.'); return; }
 			if (!imported.some(o => o.isHospital)) imported[0].isHospital = true;
-			STATE.offices = imported;
+			const importedIds = new Set(imported.map(o => o.id));
+			const kept = STATE.offices.filter(o => !importedIds.has(o.id));
+			STATE.offices = [...kept, ...imported];
 			saveState();
 			renderWizardOffices();
 			updateWizardSummary();
-			alert(`Imported ${imported.length} office(s)`);
-		} catch (err) { alert('Import failed: ' + err.message); }
+			alertMsg(`Imported ${imported.length} office(s)`);
+		} catch (err) { alertMsg('Import failed: ' + err.message); }
 	};
 	reader.readAsText(file);
 }
@@ -798,29 +895,29 @@ async function handleExportBalance() {
 	try {
 		const csv = await apiExportBalance(STATE.doctors, STATE.offices, STATE.totals);
 		downloadBlob(csv, 'balance.csv');
-	} catch (e) { alert('Export failed: ' + e.message); }
+	} catch (e) { await alertMsg('Export failed: ' + e.message); }
 }
 
 async function handleImportBalance() {
 	const input = document.getElementById('import-balance-file');
-	if (!input.files.length) return;
+	if (!input?.files?.length) return;
 	try {
 		const result = await apiImportBalance(input.files[0]);
 		for (const [docId, data] of Object.entries(result)) STATE.totals[docId] = data;
 		saveState();
 		updateBalanceTable();
-		alert('Balance imported');
-	} catch (e) { alert('Import failed: ' + e.message); }
+		alertMsg('Balance imported');
+	} catch (e) { alertMsg('Import failed: ' + e.message); }
 }
 
 async function handleExportSchedule() {
 	const mk = getMonthKey(currentScheduleYear, currentScheduleMonth);
 	const data = STATE.schedules[mk];
-	if (!data) { alert('No schedule for this month'); return; }
+	if (!data) { alertMsg('No schedule for this month'); return; }
 	try {
 		const csv = await apiExportSchedule(currentScheduleYear, currentScheduleMonth, data.assignments);
 		downloadBlob(csv, `schedule-${mk}.csv`);
-	} catch (e) { alert('Export failed: ' + e.message); }
+	} catch (e) { alertMsg('Export failed: ' + e.message); }
 }
 
 function downloadBlob(content, filename) {
@@ -834,9 +931,11 @@ function downloadBlob(content, filename) {
 // ── Tab switching ────────────────────────────────────────────────────────────
 
 function switchTab(tabName) {
-	document.querySelectorAll('.tab-btn').forEach(btn =>
-		btn.classList.toggle('active', btn.dataset.tab === tabName)
-	);
+	document.querySelectorAll('.tab-btn').forEach(btn => {
+		const isActive = btn.dataset.tab === tabName;
+		btn.classList.toggle('active', isActive);
+		btn.setAttribute('aria-selected', isActive);
+	});
 	document.querySelectorAll('.tab-pane').forEach(pane =>
 		pane.classList.toggle('active', pane.id === 'tab-' + tabName)
 	);
