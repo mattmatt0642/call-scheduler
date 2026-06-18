@@ -2,6 +2,11 @@
 Calendar → Spreadsheet View
 ========================= */
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') return String(str);
+  return str.replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>').replace(/"/g, '"').replace(/'/g, '&#39;');
+}
+
 function buildCalendarHTML(year, month, scheduleData) {
   const DAYS_IN_MONTH = new Date(year, month + 1, 0).getDate();
   const FIRST_DOW = (new Date(year, month, 1).getDay() + 6) % 7;
@@ -395,7 +400,10 @@ function handleBlackoutCellClick(doctorId, dateStr, cellEl, event) {
  const dayNum = dateStr.slice(8);
  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
  const mIdx = parseInt(dateStr.slice(5, 7), 10) - 1;
- popup.innerHTML = `<div class="period-popup-title">Time off ${monthNames[mIdx]} ${dayNum}</div>`;
+ const title = document.createElement('div');
+ title.className = 'period-popup-title';
+ title.textContent = `Time off ${monthNames[mIdx]} ${dayNum}`;
+ popup.appendChild(title);
 
  const periods = [
   { key: 'all_day', label: 'All Day', dotColor: 'var(--accent-red)' },
@@ -406,24 +414,44 @@ function handleBlackoutCellClick(doctorId, dateStr, cellEl, event) {
 
  for (const p of periods) {
   const isOn = existingPeriods.includes(p.key);
-  const check = isOn ? '&#10003; ' : '';
-  popup.innerHTML += `<button onclick="toggleTimeOffPeriod('${doctorId}', '${dateStr}', '${p.key}', this)" ${isOn ? 'style="background:var(--bg-hover)"' : ''}>
-   <span class="popup-dot" style="background:${p.dotColor}"></span>
-   ${check}${p.label}
-  </button>`;
+  const btn = document.createElement('button');
+  if (isOn) btn.style.background = 'var(--bg-hover)';
+  const dot = document.createElement('span');
+  dot.className = 'popup-dot';
+  dot.style.background = p.dotColor;
+  btn.appendChild(dot);
+  btn.appendChild(document.createTextNode((isOn ? '\u2713 ' : '') + p.label));
+  btn.addEventListener('click', () => toggleTimeOffPeriod(doctorId, dateStr, p.key));
+  popup.appendChild(btn);
  }
 
  if (existingPeriods.length > 0) {
-  popup.innerHTML += `<button class="popup-remove" onclick="handleRemoveAllTimeOffDate('${doctorId}', '${dateStr}')">Clear all for this day</button>`;
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'popup-remove';
+  clearBtn.textContent = 'Clear all for this day';
+  clearBtn.addEventListener('click', () => handleRemoveAllTimeOffDate(doctorId, dateStr));
+  popup.appendChild(clearBtn);
  }
 
  const rect = cellEl.getBoundingClientRect();
-  const portal = document.getElementById('blackout-portal') || document.body;
+ const portal = document.getElementById('blackout-portal') || document.body;
  const portalRect = portal === document.body ? { top: 0, left: 0 } : portal.getBoundingClientRect();
  portal.style.position = 'relative';
  popup.style.position = 'absolute';
- popup.style.top = (rect.bottom - portalRect.top + (portal.scrollTop || 0) + 4) + 'px';
- popup.style.left = Math.max(0, rect.left - portalRect.left - 40) + 'px';
+ const popH = 220;
+ const popW = 180;
+ let top = rect.bottom - portalRect.top + (portal.scrollTop || 0) + 4;
+ let left = Math.max(0, rect.left - portalRect.left - 40);
+ const containerH = portal === document.body ? window.innerHeight : portal.clientHeight;
+ const containerW = portal === document.body ? window.innerWidth : portal.clientWidth;
+ if (top + popH > containerH + (portal === document.body ? window.scrollY : portal.scrollTop)) {
+  top = rect.top - portalRect.top + (portal.scrollTop || 0) - popH - 4;
+ }
+ if (left + popW > containerW) {
+  left = Math.max(0, containerW - popW - 8);
+ }
+ popup.style.top = top + 'px';
+ popup.style.left = left + 'px';
  portal.appendChild(popup);
  _activePopup = popup;
 }
@@ -505,10 +533,24 @@ document.addEventListener('click', function(e) {
   if (_activePopup && !_activePopup.contains(e.target)) {
     closePeriodPopup();
   }
+  const cell = e.target.closest('.blackout-cell:not(.header):not(.weekend)');
+  if (cell) {
+    const grid = cell.closest('.blackout-grid');
+    const doctorId = grid?.dataset.doctorId;
+    const dateStr = cell.dataset.date;
+    if (doctorId && dateStr) handleBlackoutCellClick(doctorId, dateStr, cell, e);
+  }
 });
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && _activePopup) {
     closePeriodPopup();
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('blackout-cell') && !e.target.classList.contains('header') && !e.target.classList.contains('weekend')) {
+    e.preventDefault();
+    const grid = e.target.closest('.blackout-grid');
+    const doctorId = grid?.dataset.doctorId;
+    const dateStr = e.target.dataset.date;
+    if (doctorId && dateStr) handleBlackoutCellClick(doctorId, dateStr, e.target, e);
   }
 });
