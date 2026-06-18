@@ -76,11 +76,11 @@ function buildDocCard(doc) {
     <div class="doc-card-section">
       <div class="doc-card-label">Call Limits</div>
       <div class="limits-row">
-  <div class="limit-item"><label>Max Weekday Day</label><input type="number" min="0" value="${doc.maxWeekdayDayCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayDayCalls', parseInt(this.value)||0)"/></div>
-  <div class="limit-item"><label>Max Weekday Night</label><input type="number" min="0" value="${doc.maxWeekdayNightCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayNightCalls', parseInt(this.value)||0)"/></div>
-  <div class="limit-item"><label>Max Friday Night</label><input type="number" min="0" value="${doc.maxFridayNightCalls}" onchange="updateDocField('${doc.id}', 'maxFridayNightCalls', parseInt(this.value)||0)"/></div>
-  <div class="limit-item"><label>Max Weekend Blocks</label><input type="number" min="0" value="${doc.maxWeekendBlocks}" onchange="updateDocField('${doc.id}', 'maxWeekendBlocks', parseInt(this.value)||0)"/></div>
-  <div class="limit-item"><label>Sessions Per Week</label><input type="number" min="0" max="10" value="${doc.requiredSessionsPerWeek}" onchange="updateDocField('${doc.id}', 'requiredSessionsPerWeek', parseInt(this.value)||0)"/></div>
+  <div class="limit-item"><label>Max Weekday Day</label><input type="number" min="0" value="${doc.maxWeekdayDayCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayDayCalls', Math.max(0, parseInt(this.value)||0))"/></div>
+  <div class="limit-item"><label>Max Weekday Night</label><input type="number" min="0" value="${doc.maxWeekdayNightCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayNightCalls', Math.max(0, parseInt(this.value)||0))"/></div>
+  <div class="limit-item"><label>Max Friday Night</label><input type="number" min="0" value="${doc.maxFridayNightCalls}" onchange="updateDocField('${doc.id}', 'maxFridayNightCalls', Math.max(0, parseInt(this.value)||0))"/></div>
+  <div class="limit-item"><label>Max Weekend Blocks</label><input type="number" min="0" value="${doc.maxWeekendBlocks}" onchange="updateDocField('${doc.id}', 'maxWeekendBlocks', Math.max(0, parseInt(this.value)||0))"/></div>
+  <div class="limit-item"><label>Sessions Per Week</label><input type="number" min="0" max="10" value="${doc.requiredSessionsPerWeek}" onchange="updateDocField('${doc.id}', 'requiredSessionsPerWeek', Math.min(10, Math.max(0, parseInt(this.value)||0)))"/></div>
       </div>
     </div>
 
