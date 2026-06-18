@@ -3,20 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#111119" />
+<meta name="description" content="Automated on-call and office schedule generator for medical practices" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" />
 <title>Call Scheduler</title>
-<link rel="stylesheet" href="css/style.css?v=3" />
+<link rel="stylesheet" href="css/style.css?v=4" />
 </head>
 <body>
+<noscript><div style="padding:2rem;text-align:center;font-family:sans-serif;color:#333;">Call Scheduler requires JavaScript to run. Please enable JavaScript in your browser settings.</div></noscript>
 <div id="root">
 
 <!-- Header -->
 <header class="app-header">
 <h1>Call<span>Scheduler</span></h1>
-<nav class="tab-nav">
-<button class="tab-btn active" data-tab="setup">Setup</button>
-<button class="tab-btn" data-tab="doctors">Doctors</button>
-<button class="tab-btn" data-tab="schedule">Schedule</button>
-<button class="tab-btn" data-tab="balance">Balance</button>
+<nav class="tab-nav" role="tablist">
+<button class="tab-btn active" data-tab="setup" role="tab" aria-selected="true" aria-controls="tab-setup">Setup</button>
+<button class="tab-btn" data-tab="doctors" role="tab" aria-selected="false" aria-controls="tab-doctors">Doctors</button>
+<button class="tab-btn" data-tab="schedule" role="tab" aria-selected="false" aria-controls="tab-schedule">Schedule</button>
+<button class="tab-btn" data-tab="balance" role="tab" aria-selected="false" aria-controls="tab-balance">Balance</button>
 </nav>
 </header>
 
@@ -24,27 +28,27 @@
 <main>
 
 <!-- ─── SETUP / WIZARD ─────────────────────────────────── -->
-<section id="tab-setup" class="tab-pane active">
+<section id="tab-setup" class="tab-pane active" role="tabpanel">
 <div class="page">
 
 <!-- Step indicator -->
-<div class="step-bar" id="wizard-steps">
-<div class="step-item" data-step="1" role="button" tabindex="0" title="Schedule Settings">
+<div class="step-bar" id="wizard-steps" role="list">
+<div class="step-item" data-step="1" role="listitem" tabindex="0" title="Schedule Settings">
 <div class="step-dot active">1</div>
 <div class="step-label">Schedule</div>
 </div>
-<div class="step-line"></div>
-<div class="step-item" data-step="2" role="button" tabindex="0" title="Edit Doctors">
+<div class="step-line" aria-hidden="true"></div>
+<div class="step-item" data-step="2" role="listitem" tabindex="0" title="Edit Doctors">
 <div class="step-dot">2</div>
 <div class="step-label">Doctors</div>
 </div>
-<div class="step-line"></div>
-<div class="step-item" data-step="3" role="button" tabindex="0" title="Edit Offices">
+<div class="step-line" aria-hidden="true"></div>
+<div class="step-item" data-step="3" role="listitem" tabindex="0" title="Edit Offices">
 <div class="step-dot">3</div>
 <div class="step-label">Offices</div>
 </div>
-<div class="step-line"></div>
-<div class="step-item" data-step="4" role="button" tabindex="0" title="Generate Schedule">
+<div class="step-line" aria-hidden="true"></div>
+<div class="step-item" data-step="4" role="listitem" tabindex="0" title="Generate Schedule">
 <div class="step-dot">4</div>
 <div class="step-label">Generate</div>
 </div>
@@ -52,17 +56,17 @@
 
 <!-- Step 1: Practice -->
 <div id="wstep-1" class="wizard-step">
-<div class="step-heading">Schedule Settings</div>
-  <div class="step-subheading">Choose the month for the schedule.</div>
+<h2 class="step-heading">Schedule Settings</h2>
+<p class="step-subheading">Choose the month for the schedule.</p>
 
   <div class="card">
     <div class="gen-card-body">
       <div class="field">
-        <label>Year</label>
+        <label for="wiz-year">Year</label>
         <input type="number" id="wiz-year" value="" min="2020" max="2100" />
       </div>
       <div class="field">
-        <label>Month</label>
+        <label for="wiz-month">Month</label>
         <select id="wiz-month">
           <option value="0">January</option><option value="1">February</option>
           <option value="2">March</option><option value="3">April</option>
@@ -75,7 +79,7 @@
     </div>
 
     <div class="quick-setup" id="quick-setup">
-      <div class="quick-setup-heading">Current Setup</div>
+      <h3 class="quick-setup-heading">Current Setup</h3>
       <div id="quick-setup-content"></div>
     </div>
 
@@ -88,8 +92,8 @@
 
 <!-- Step 2: Doctors -->
 <div id="wstep-2" class="wizard-step hidden">
-  <div class="step-heading">Your Doctors</div>
-  <div class="step-subheading">Add all doctors who take call. You can edit details later on the Doctors tab.</div>
+  <h2 class="step-heading">Your Doctors</h2>
+  <p class="step-subheading">Add all doctors who take call. You can edit details later on the Doctors tab.</p>
 
   <div class="card">
     <div class="quick-add">
@@ -116,8 +120,8 @@
 
 <!-- Step 3: Offices -->
 <div id="wstep-3" class="wizard-step hidden">
-  <div class="step-heading">Your Offices</div>
-  <div class="step-subheading">Add locations. Mark the hospital so call shifts are placed correctly.</div>
+  <h2 class="step-heading">Your Offices</h2>
+  <p class="step-subheading">Add locations. Mark the hospital so call shifts are placed correctly.</p>
 
   <div class="card">
     <div class="quick-add">
@@ -144,14 +148,14 @@
 
 <!-- Step 4: Restrictions & Generate -->
 <div id="wstep-4" class="wizard-step hidden">
-<div class="step-heading">Availability &amp; Generate</div>
-<div class="step-subheading">Mark time off for each doctor, then generate the schedule.</div>
+<h2 class="step-heading">Availability &amp; Generate</h2>
+<p class="step-subheading">Mark time off for each doctor, then generate the schedule.</p>
 
 <div class="gen-layout">
 <div class="gen-left">
 <!-- Time off calendar -->
 <div class="gen-card">
-<div class="gen-card-header">Time Off</div>
+<h3 class="gen-card-header">Time Off</h3>
 <div class="gen-card-body">
 <div class="field" style="margin-bottom:0.6rem;">
 <label>Doctor</label>
@@ -173,7 +177,7 @@
 <div class="gen-right">
 <!-- Generate -->
 <div class="gen-card">
-<div class="gen-card-header">Generate Schedule</div>
+<h3 class="gen-card-header">Generate Schedule</h3>
 <div class="gen-card-body">
 <div id="gen-status" class="gen-status-area"></div>
 <button id="btn-generate" class="btn-generate" onclick="handleGenerate()">
@@ -188,7 +192,7 @@
 
 <!-- Summary -->
 <div class="gen-card">
-<div class="gen-card-header">Summary</div>
+<h3 class="gen-card-header">Summary</h3>
 <div class="gen-card-body" id="wiz-summary">
 <div class="text-muted text-sm">Add doctors and offices to see a summary.</div>
 </div>
@@ -204,31 +208,31 @@
 <div id="wiz-schedule-preview" class="wiz-schedule-preview hidden">
 <div class="sched-header">
 <div>
-<div class="sched-title" id="wiz-sched-month-label"></div>
+<h2 class="sched-title" id="wiz-sched-month-label"></h2>
 </div>
 <div class="flex-row">
 <div class="month-nav">
-<button class="month-nav-btn" onclick="changeWizScheduleMonth(-1)">&lsaquo;</button>
+<button class="month-nav-btn" aria-label="Previous month" onclick="changeWizScheduleMonth(-1)">&lsaquo;</button>
 <span class="month-nav-label" id="wiz-sched-nav-label"></span>
-<button class="month-nav-btn" onclick="changeWizScheduleMonth(1)">&rsaquo;</button>
+<button class="month-nav-btn" aria-label="Next month" onclick="changeWizScheduleMonth(1)">&rsaquo;</button>
 </div>
 <button class="btn btn-sm btn-ghost" onclick="handleExportSchedule()">&darr; CSV</button>
 </div>
 </div>
 <div class="sched-stats">
-<div class="stat-chip">
+<div class="stat-chip" title="Solver completion status">
 <span class="stat-label">Status</span>
 <span class="stat-val" id="wiz-sched-solver-status">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Gini coefficient for call assignments">
 <span class="stat-label">Call Fairness</span>
 <span class="stat-val" id="wiz-sched-call-gini">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Gini coefficient for session assignments">
 <span class="stat-label">Session Fairness</span>
 <span class="stat-val" id="wiz-sched-session-gini">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Unfilled slots in the schedule">
 <span class="stat-label">Unfilled</span>
 <span class="stat-val" id="wiz-sched-unfilled">&mdash;</span>
 </div>
@@ -242,10 +246,10 @@
 </section>
 
 <!-- ─── DOCTORS (full config) ──────────────────────────── -->
-<section id="tab-doctors" class="tab-pane">
+<section id="tab-doctors" class="tab-pane" role="tabpanel">
 <div class="page">
-      <div class="step-heading">Doctors</div>
-      <div class="step-subheading">Edit each doctor's profile — days off, call preferences, and limits are right here.</div>
+      <h2 class="step-heading">Doctors</h2>
+      <p class="step-subheading">Edit each doctor's profile — days off, call preferences, and limits are right here.</p>
 
 <div id="doctor-accordion" class="doc-accordion"></div>
 
@@ -256,17 +260,17 @@
 </section>
 
 <!-- ─── SCHEDULE ────────────────────────────────────────── -->
-<section id="tab-schedule" class="tab-pane">
+<section id="tab-schedule" class="tab-pane" role="tabpanel">
 <div class="page">
   <div class="sched-header">
     <div>
-      <div class="sched-title" id="sched-month-label">September 2026</div>
+      <h2 class="sched-title" id="sched-month-label">September 2026</h2>
     </div>
     <div class="flex-row">
       <div class="month-nav">
-        <button class="month-nav-btn" onclick="changeScheduleMonth(-1)">&lsaquo;</button>
+        <button class="month-nav-btn" aria-label="Previous month" onclick="changeScheduleMonth(-1)">&lsaquo;</button>
         <span class="month-nav-label" id="sched-nav-label">Sep 2026</span>
-        <button class="month-nav-btn" onclick="changeScheduleMonth(1)">&rsaquo;</button>
+        <button class="month-nav-btn" aria-label="Next month" onclick="changeScheduleMonth(1)">&rsaquo;</button>
       </div>
       <button class="btn btn-sm btn-ghost" onclick="handleExportSchedule()">&darr; CSV</button>
       <button class="btn btn-sm btn-danger" onclick="handleClearMonth()">Clear</button>
@@ -274,19 +278,19 @@
   </div>
 
 <div class="sched-stats" id="sched-stats">
-<div class="stat-chip">
+<div class="stat-chip" title="Solver completion status">
 <span class="stat-label">Status</span>
 <span class="stat-val" id="sched-solver-status">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Gini coefficient for call assignments (lower = fairer)">
 <span class="stat-label">Call Fairness</span>
 <span class="stat-val" id="sched-call-gini">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Gini coefficient for session assignments (lower = fairer)">
 <span class="stat-label">Session Fairness</span>
 <span class="stat-val" id="sched-session-gini">&mdash;</span>
 </div>
-<div class="stat-chip">
+<div class="stat-chip" title="Unfilled slots in the schedule">
 <span class="stat-label">Unfilled</span>
 <span class="stat-val" id="sched-unfilled">&mdash;</span>
 </div>
@@ -297,12 +301,12 @@
 </section>
 
 <!-- ─── BALANCE ────────────────────────────────────────── -->
-<section id="tab-balance" class="tab-pane">
+<section id="tab-balance" class="tab-pane" role="tabpanel">
 <div class="page">
 <div class="sched-header">
 <div>
-<div class="sched-title">Cumulative Balance</div>
-<div class="sched-subtitle">Call assignments and sessions across all generated months</div>
+<h2 class="sched-title">Cumulative Balance</h2>
+<p class="sched-subtitle">Call assignments and sessions across all generated months</p>
 </div>
 <div class="flex-row">
 <button class="btn btn-sm btn-ghost" id="btn-export-balance">&darr; Export</button>
@@ -325,12 +329,12 @@
 
 </div>
 
-<script src="js/storage.js?v=3"></script>
-<script src="js/api.js?v=3"></script>
-<script src="js/calendar.js?v=3"></script>
-<script src="js/doctor_config.js?v=3"></script>
-<script src="js/auth.js?v=3"></script>
-<script src="js/app.js?v=3"></script>
+<script defer src="js/storage.js?v=4"></script>
+<script defer src="js/api.js?v=4"></script>
+<script defer src="js/calendar.js?v=4"></script>
+<script defer src="js/doctor_config.js?v=4"></script>
+<script defer src="js/auth.js?v=4"></script>
+<script defer src="js/app.js?v=4"></script>
 <div class="toast-container" id="toast-container"></div>
 </body>
 </html>
