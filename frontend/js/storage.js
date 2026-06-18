@@ -20,17 +20,22 @@ function generateId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+let _saveStateTimer = null;
+
 function saveState() {
 try {
 localStorage.setItem('callsched', JSON.stringify(STATE));
 } catch (e) {
 console.warn('Failed to save state', e);
 }
+clearTimeout(_saveStateTimer);
+_saveStateTimer = setTimeout(() => {
 fetch(`${window.location.origin}/api/state`, {
 method: 'POST',
 headers: { 'Content-Type': 'application/json' },
 body: JSON.stringify(STATE),
 }).catch(() => {});
+}, 300);
 }
 
 function loadState() {
@@ -48,20 +53,44 @@ console.warn('Failed to load state', e);
 }
 
 async function loadStateFromServer() {
-try {
-const res = await fetch(`${window.location.origin}/api/state`);
-if (!res.ok) return false;
-const data = await res.json();
-if (data && Object.keys(data).length > 0) {
-_mergeDefaults(data);
-STATE = data;
-localStorage.setItem('callsched', JSON.stringify(STATE));
-migrateBlackoutFormat();
-return true;
+ try {
+ const res = await fetch(`${window.location.origin}/api/state`);
+ if (!res.ok) return false;
+ const data = await res.json();
+ if (data && Object.keys(data).length > 0) {
+ _mergeDefaults(data);
+   _mergeServerIntoLocal(data);
+ migrateBlackoutFormat();
+ return true;
+ }
+ } catch {
+ }
+ return false;
 }
-} catch {
-}
-return false;
+
+function _mergeServerIntoLocal(server) {
+  for (const key of ['doctors', 'offices']) {
+    if (server[key] && server[key].length > 0) {
+      STATE[key] = server[key];
+    }
+  }
+  if (server.settings) STATE.settings = { ...STATE.settings, ...server.settings };
+  if (server.schedules) {
+    for (const mk in server.schedules) {
+      STATE.schedules[mk] = server.schedules[mk];
+    }
+  }
+  if (server.blackouts) {
+    for (const mk in server.blackouts) {
+      STATE.blackouts[mk] = server.blackouts[mk];
+    }
+  }
+  if (server.totals) {
+    for (const docId in server.totals) {
+      STATE.totals[docId] = server.totals[docId];
+    }
+  }
+  saveState();
 }
 
 function _mergeDefaults(parsed) {
