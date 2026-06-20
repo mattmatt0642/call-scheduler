@@ -6,11 +6,36 @@ Everything important visible at a glance; advanced fields collapsed
 function renderDoctorAccordion() {
   const container = document.getElementById('doctor-accordion');
   if (!container) return;
+
+  const mainEl = document.querySelector('main');
+  const prevScrollTop = mainEl ? mainEl.scrollTop : 0;
+  const prevScrollLeft = mainEl ? mainEl.scrollLeft : 0;
+
+  const openIds = Array.from(container.querySelectorAll('.advanced-body.open'))
+    .map(el => el.id)
+    .filter(id => id);
+
   if (!STATE.doctors.length) {
-    container.innerHTML = '<p class="empty-msg">No doctors to configure. Add doctors in Setup.</p>';
+    container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">+</div><div class="empty-state-title">No doctors to configure</div><div class="empty-state-desc">Add doctors in the Setup tab first.</div></div>';
+    if (mainEl) { mainEl.scrollTop = prevScrollTop; mainEl.scrollLeft = prevScrollLeft; }
     return;
   }
+
   container.innerHTML = STATE.doctors.map(doc => buildDocCard(doc)).join('');
+
+  openIds.forEach(id => {
+    const body = document.getElementById(id);
+    if (body) {
+      body.classList.add('open');
+      const btn = body.previousElementSibling;
+      if (btn) {
+        const arrow = btn.querySelector('.advanced-arrow');
+        if (arrow) arrow.innerHTML = '&#9660;';
+      }
+    }
+  });
+
+  if (mainEl) { mainEl.scrollTop = prevScrollTop; mainEl.scrollLeft = prevScrollLeft; }
 }
 
 function buildDocCard(doc) {
@@ -34,7 +59,7 @@ function buildDocCard(doc) {
         const checked = isAllowedAll || doc.allowedOffices?.includes(o.id) ? 'checked' : '';
         return `<label class="day-chip off ${checked ? 'active' : ''}"><input type="checkbox" ${checked} onchange="toggleOfficeAccess('${doc.id}', '${o.id}', this.checked); this.parentElement.classList.toggle('active', this.checked)"/>${escapeHtml(o.name)}</label>`;
       }).join('')
-    : '<span class="text-muted" style="font-size:0.82rem">No non-hospital offices defined</span>';
+    : '<span class="text-sm text-muted">No non-hospital offices defined</span>';
 
   const advancedId = 'adv-' + doc.id;
   const officePrefs = buildOfficePreferenceList(doc);
@@ -42,7 +67,7 @@ function buildDocCard(doc) {
   const fixedRows = buildFixedRecurringRows(doc);
   const overrideRows = buildOneTimeOverrideRows(doc);
 
-  return `<div class="doc-item" data-doc-id="${doc.id}">
+  return `<div class="doc-item fade-in-item" data-doc-id="${doc.id}">
   <div class="doc-card">
     <div class="doc-card-top">
       <div class="doc-card-name-row">
@@ -63,18 +88,18 @@ function buildDocCard(doc) {
     </div>
 
     <div class="doc-card-section">
-      <div class="doc-card-label">Standing Days Off</div>
+      <h4 class="doc-card-label">Standing Days Off</h4>
       <div class="day-chips-row">${offChecks}</div>
     </div>
 
     <div class="doc-card-section">
-      <div class="doc-card-label">Preferred Call Days</div>
+      <h4 class="doc-card-label">Preferred Call Days</h4>
       <div class="day-chips-row">${prefChecks}</div>
       <div class="form-note">Friday affects day calls only — Fri night is always balance-only.</div>
     </div>
 
     <div class="doc-card-section">
-      <div class="doc-card-label">Call Limits</div>
+      <h4 class="doc-card-label">Call Limits</h4>
       <div class="limits-row">
   <div class="limit-item"><label>Max Weekday Day</label><input type="number" min="0" value="${doc.maxWeekdayDayCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayDayCalls', Math.max(0, parseInt(this.value)||0))"/></div>
   <div class="limit-item"><label>Max Weekday Night</label><input type="number" min="0" value="${doc.maxWeekdayNightCalls}" onchange="updateDocField('${doc.id}', 'maxWeekdayNightCalls', Math.max(0, parseInt(this.value)||0))"/></div>
@@ -85,7 +110,7 @@ function buildDocCard(doc) {
     </div>
 
     <div class="doc-card-section">
-      <div class="doc-card-label">Allowed Offices</div>
+      <h4 class="doc-card-label">Allowed Offices</h4>
       <div class="day-chips-row">${allowedChecks}</div>
     </div>
 
@@ -95,20 +120,20 @@ function buildDocCard(doc) {
       </button>
       <div id="${advancedId}" class="advanced-body">
         <div class="doc-card-section">
-          <div class="doc-card-label">Office Preferences <span class="form-note-inline">(drag to reorder — top = highest priority)</span></div>
+          <h4 class="doc-card-label">Office Preferences <span class="form-note-inline">(drag to reorder — top = highest priority)</span></h4>
           ${officePrefs}
         </div>
         <div class="doc-card-section">
-          <div class="doc-card-label">Preferences</div>
+          <h4 class="doc-card-label">Preferences</h4>
           ${prefDropdowns}
         </div>
         <div class="doc-card-section">
-          <div class="doc-card-label">Fixed Recurring Assignments</div>
+          <h4 class="doc-card-label">Fixed Recurring Assignments</h4>
           ${fixedRows}
           <button class="btn btn-sm mt-half" onclick="addFixedRecurring('${doc.id}')">+ Add Recurring</button>
         </div>
         <div class="doc-card-section">
-          <div class="doc-card-label">One-Time Overrides</div>
+          <h4 class="doc-card-label">One-Time Overrides</h4>
           ${overrideRows}
           <button class="btn btn-sm mt-half" onclick="addOneTimeOverride('${doc.id}')">+ Add Override</button>
         </div>
@@ -198,7 +223,7 @@ function buildPreferenceDropdowns(doc) {
 
 function buildFixedRecurringRows(doc) {
   const items = doc.fixedRecurring || [];
-  if (!items.length) return '<p class="text-muted" style="font-size:0.75rem">No recurring assignments.</p>';
+  if (!items.length) return '<p class="mini-empty-note">No recurring assignments yet. Click the button below to add one.</p>';
 
   const dayOpts = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d, i) =>
     `<option value="${i}">${d}</option>`
@@ -231,7 +256,7 @@ function buildFixedRecurringRows(doc) {
 
 function buildOneTimeOverrideRows(doc) {
   const items = doc.oneTimeOverrides || [];
-  if (!items.length) return '<p class="text-muted" style="font-size:0.75rem">No one-time overrides.</p>';
+  if (!items.length) return '<p class="mini-empty-note">No one-time overrides yet. Click the button below to add one.</p>';
 
   const shiftOpts = ['office_am','office_pm','office_late','call_day','call_night'].map(s =>
     `<option value="${s}">${s.replace(/^(office_|call_)/, '').toUpperCase()}</option>`
@@ -268,7 +293,11 @@ function updateDocField(docId, field, value) {
   if (!doc) return;
   doc[field] = value;
   saveState();
-  if (field === 'name') renderSetup();
+  if (field === 'name') {
+    const input = document.querySelector(`.doc-item[data-doc-id="${docId}"] .doc-name-input`);
+    if (input) input.value = value;
+    renderSetup();
+  }
 }
 
 function toggleDayOff(docId, dayIndex, checked, field) {
@@ -351,8 +380,6 @@ function updateOneTimeOverride(docId, idx, field, value) {
 }
 
 function reopenDocItem(docId) {
-  const item = document.querySelector(`.doc-item[data-doc-id="${docId}"]`);
-  if (item) item.scrollIntoView({ behavior: 'smooth', block: 'center' });
   const advBody = document.getElementById('adv-' + docId);
   if (advBody) {
     advBody.classList.add('open');
