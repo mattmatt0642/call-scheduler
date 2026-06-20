@@ -840,6 +840,100 @@ check("Pipeline: no duplicate (doctor, slot) pairs",
 
 
 # ============================================================
+# SECTION 11: H12 OFFICE VARIETY ENFORCEMENT
+# ============================================================
+print("\n=== SECTION 11: H12 OFFICE VARIETY ===")
+
+# 11a. Build 5-doctor, 5-office (1 hospital + 4 clinics) input matching user's typical config
+docs_5 = make_doctors(5)
+offices_5 = [
+    Office(id="hosp", name="Hospital", is_hospital=True,
+           max_per_shift=2, restricted_tuesday_max=1),
+    Office(id="north", name="North", is_hospital=False,
+           max_per_shift=2, restricted_tuesday_max=2),
+    Office(id="south", name="South", is_hospital=False,
+           max_per_shift=2, restricted_tuesday_max=2),
+    Office(id="east", name="East", is_hospital=False,
+           max_per_shift=2, restricted_tuesday_max=2),
+    Office(id="west", name="West", is_hospital=False,
+           max_per_shift=2, restricted_tuesday_max=2),
+]
+inp_5 = ScheduleInput(
+    year=2026, month=8, doctors=docs_5, offices=offices_5,
+    global_office_ranking=["hosp", "north", "south", "east", "west"],
+    day_off_dates=[], custom_restrictions=[],
+    locked_assignments=[], historical_balance={},
+    solver_time_limit_seconds=30
+)
+
+# 11b. Run both paths
+result_5g = schedule_greedy(inp_5)
+result_5b = generate_schedule(inp_5)
+
+for label, result in [("greedy", result_5g), ("generate", result_5b)]:
+    slot_map_5 = {s.slot_id: s for s in result.slots}
+    days_5 = get_days_in_month(inp_5.year, inp_5.month)
+    hosp_id_5 = "hosp"
+
+    # Group office sessions by doctor-week
+    doc_week_offices = defaultdict(lambda: defaultdict(set))
+    doc_week_sessions = defaultdict(lambda: defaultdict(int))
+    for a in result.assignments:
+        s = slot_map_5[a.slot_id]
+        if s.shift_type in ('office_am', 'office_pm', 'office_late',
+                             'surgical_am', 'surgical_hosp_pm'):
+            day_info = next((d for d in days_5 if d['date'] == s.date), None)
+            if day_info:
+                wn = day_info['week_num']
+                doc_week_offices[a.doctor_id][wn].add(s.office_id)
+                doc_week_sessions[a.doctor_id][wn] += 1
+
+    h12_hard = 0
+    h12_soft = 0
+    for doc in docs_5:
+        for wn in sorted(doc_week_offices[doc.id].keys()):
+            offices_used = doc_week_offices[doc.id][wn]
+            n_sess = doc_week_sessions[doc.id][wn]
+            non_hosp = offices_used - {hosp_id_5}
+            if n_sess >= 3 and len(non_hosp) < 1:
+                h12_hard += 1
+            elif n_sess >= 3 and len(offices_used) < 2:
+                h12_soft += 1
+
+    check(f"H12 {label}: no hard variety violations (0 non-hosp offices with 3+ sessions)",
+          h12_hard == 0, f"got {h12_hard} hard violations")
+    check(f"H12 {label}: soft variety violations <= 2",
+          h12_soft <= 2, f"got {h12_soft} soft violations")
+
+    # Every doctor should visit at least 2 non-hospital offices across the month
+    doc_monthly_non_hosp = defaultdict(set)
+    for a in result.assignments:
+        s = slot_map_5[a.slot_id]
+        if s.shift_type in ('office_am', 'office_pm', 'office_late',
+                             'surgical_am', 'surgical_hosp_pm'):
+            if s.office_id != hosp_id_5:
+                doc_monthly_non_hosp[a.doctor_id].add(s.office_id)
+
+    for doc in docs_5:
+        n_nh = len(doc_monthly_non_hosp[doc.id])
+        check(f"H12 {label}: {doc.name} visits >= 2 non-hospital offices/month",
+              n_nh >= 2, f"got {n_nh} (offices: {doc_monthly_non_hosp[doc.id]})")
+
+# 11c. Full constraint checker validation on 5-doctor result
+violations_5g = validate_schedule(inp_5, result_5g.slots, result_5g.assignments)
+h12_violations = [v for v in violations_5g if v.constraint_id == "H12"]
+h12_hard_v = [v for v in h12_violations if v.severity == "hard"]
+check(f"H12 greedy: checker reports 0 hard H12 violations",
+      len(h12_hard_v) == 0, f"got {len(h12_hard_v)}")
+
+violations_5b = validate_schedule(inp_5, result_5b.slots, result_5b.assignments)
+h12_violations_b = [v for v in violations_5b if v.constraint_id == "H12"]
+h12_hard_b = [v for v in h12_violations_b if v.severity == "hard"]
+check(f"H12 generate: checker reports 0 hard H12 violations",
+      len(h12_hard_b) == 0, f"got {len(h12_hard_b)}")
+
+
+# ============================================================
 # SUMMARY
 # ============================================================
 print(f"\n{'='*60}")

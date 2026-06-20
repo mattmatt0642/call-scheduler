@@ -196,6 +196,48 @@ class TestIsAvailable(unittest.TestCase):
             "d0", north_slot, call_assignments, call_slot_map,
             self.load, self.doc_map, self.hospital_id, set()))
 
+    def test_post_call_cleared_load_does_not_bypass_h8(self):
+        call_slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
+            office_id="hosp", shift_type="call_day",
+            start_time="07:00", end_time="19:00", max_doctors=1
+        )
+        call_assignments = [Assignment(doctor_id="d0", slot_id=call_slot.slot_id)]
+        call_slot_map = {call_slot.slot_id: call_slot}
+        _update_load(self.load, "d0", call_slot, self.hospital_id)
+        self.assertIsNotNone(self.load["d0"]["post_call_since"])
+        self.load["d0"]["post_call_since"] = None
+        north_slot = ShiftSlot(
+            slot_id="2026-01-06_north_office_am", date="2026-01-06",
+            office_id="north", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        call_slot_map[north_slot.slot_id] = north_slot
+        self.assertFalse(_is_available(
+            "d0", north_slot, call_assignments, call_slot_map,
+            self.load, self.doc_map, self.hospital_id, set()),
+            "H8 block should not be bypassed by clearing load[post_call_since] "
+            "without an actual hospital office assignment")
+
+    def test_post_call_active_load_blocks_non_hospital(self):
+        call_slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
+            office_id="hosp", shift_type="call_day",
+            start_time="07:00", end_time="19:00", max_doctors=1
+        )
+        call_assignments = [Assignment(doctor_id="d0", slot_id=call_slot.slot_id)]
+        call_slot_map = {call_slot.slot_id: call_slot}
+        _update_load(self.load, "d0", call_slot, self.hospital_id)
+        north_slot = ShiftSlot(
+            slot_id="2026-01-06_north_office_am", date="2026-01-06",
+            office_id="north", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        call_slot_map[north_slot.slot_id] = north_slot
+        self.assertFalse(_is_available(
+            "d0", north_slot, call_assignments, call_slot_map,
+            self.load, self.doc_map, self.hospital_id, set()))
+
 class TestUpdateLoad(unittest.TestCase):
     def setUp(self):
             self.doctors = _make_doctors(1)
