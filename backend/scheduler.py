@@ -2,7 +2,7 @@ from models import (
     DoctorProfile, Office, ShiftSlot, Assignment, ScheduleInput, ScheduleResult,
     abs_times_overlap, get_days_in_month, get_weekend_blocks,
     get_call_balance_group, is_friday, WeekendCallBlock, CustomRestriction,
-    RecurringSlot, OneTimeOverride
+    RecurringSlot, OneTimeOverride, SHIFT_TIMES, SHIFT_PERIODS
 )
 from slot_generator import generate_slots, get_slot_by_id
 from datetime import date as dt_class, timedelta
@@ -52,45 +52,11 @@ def _get_day_off_entries(day_off_dates, doctor_id):
     return entries
 
 
-SHIFT_PERIODS = {
-    "office_am": "morning",
-    "office_pm": "afternoon",
-    "office_late": "afternoon",
-    "call_day": "all_day",
-    "call_night": "all_day",
-    "surgical_am": "morning",
-    "surgical_hosp_pm": "afternoon",
-}
-
-SHIFT_TIMES = {
-    "office_am": ("08:00", "12:00"),
-    "office_pm": ("13:00", "17:00"),
-    "office_late": ("13:30", "18:30"),
-    "call_day": ("07:00", "19:00"),
-    "call_night": ("19:00", "07:00"),
-    "surgical_am": ("07:00", "12:00"),
-    "surgical_hosp_pm": ("13:00", "17:00"),
-}
-
-
-def _times_overlap(s1, e1, s2, e2):
-    def to_min(t):
-        h, m = t.split(":")
-        return int(h) * 60 + int(m)
-    a1, b1 = to_min(s1), to_min(e1)
-    a2, b2 = to_min(s2), to_min(e2)
-    if b1 <= a1:
-        b1 += 24 * 60
-    if b2 <= a2:
-        b2 += 24 * 60
-    return a1 < b2 and a2 < b1
-
-
-def _is_blocked_by_timeoff(entry, slot_type):
+def _get_day_off_entries(day_off_dates, doctor_id):
     period = entry.get("period", "all_day")
-    if period == "all_day":
-        return True
     slot_period = SHIFT_PERIODS.get(slot_type, "all_day")
+    if period == "all_day":
+        return slot_period == "all_day"
     if slot_period == "all_day":
         return True
     if period == "morning" and slot_period == "morning":
@@ -257,8 +223,8 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
         if entry_date == slot.date:
             if isinstance(entry, str):
                 return False
-        if _is_blocked_by_timeoff(entry, slot.shift_type):
-            return False
+            if _is_blocked_by_timeoff(entry, slot.shift_type):
+                return False
 
     dow = dt_class.fromisoformat(slot.date).weekday()
     if dow in doc.standing_days_off:
@@ -273,28 +239,26 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
     if slot.shift_type not in ('call_day', 'call_night',
                                 'call_weekend', 'call_weekend_sun'):
         if slot.office_id != hospital_id:
-            doc_load = load.get(doc_id, {})
-            if doc_load.get('post_call_since') is not None:
-                doc_assigns = sorted(
-                    [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
-                    key=lambda x: (x[0].date, x[0].start_time)
-                )
-                all_items = [(s, False) for s, _ in doc_assigns] + [(slot, True)]
-                all_items.sort(key=lambda x: (x[0].date, x[0].start_time))
-                post_call_restricted = False
-                for s, is_current in all_items:
-                    if post_call_restricted:
-                        if s.shift_type in ('office_am', 'office_pm', 'office_late',
-                                            'surgical_am', 'surgical_hosp_pm'):
-                            if s.office_id == hospital_id:
-                                post_call_restricted = False
-                                continue
-                            else:
-                                if is_current:
-                                    return False
-                    if s.shift_type in ('call_day', 'call_night',
-                                        'call_weekend', 'call_weekend_sun'):
-                        post_call_restricted = True
+            doc_assigns = sorted(
+                [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
+                key=lambda x: (x[0].date, x[0].start_time)
+            )
+            all_items = [(s, False) for s, _ in doc_assigns] + [(slot, True)]
+            all_items.sort(key=lambda x: (x[0].date, x[0].start_time))
+            post_call_restricted = False
+            for s, is_current in all_items:
+                if post_call_restricted:
+                    if s.shift_type in ('office_am', 'office_pm', 'office_late',
+                                        'surgical_am', 'surgical_hosp_pm'):
+                        if s.office_id == hospital_id:
+                            post_call_restricted = False
+                            continue
+                        else:
+                            if is_current:
+                                return False
+                if s.shift_type in ('call_day', 'call_night',
+                                    'call_weekend', 'call_weekend_sun'):
+                    post_call_restricted = True
 
     for a in assignments:
         if a.doctor_id != doc_id:
@@ -501,6 +465,8 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                 if not _is_available(doc.id, sun_slot, assignments, slot_map,
                                      load, doc_map, hospital_id, doc_day_off_entries):
                     continue
+                if len([a for a in assignments if a.slot_id == p_sun_id]) >= sun_slot.max_doctors:
+                    continue
             if slot.call_balance_group in ('friday_night', 'weekend_block'):
                 debt = call_debt_balance_only(doc, load, slot, inp.historical_balance)
             else:
@@ -597,8 +563,6 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         or not _is_available(doc.id, night_slot, assignments, slot_map,
                                              load, doc_map, hospital_id, doc_day_off_entries)):
                         continue
-                    if dow >= 5:
-                        continue
                     _do_assign(day_slot, doc)
                     _do_assign(night_slot, doc)
                     day_filled = True
@@ -689,9 +653,22 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         slot_map[a2.slot_id].shift_type == 'office_am'
                         for a2 in assignments)
                     if already_has_hosp_am:
-                        for off in inp.offices:
-                            if off.id == hospital_id:
-                                continue
+                        day_info = next((d for d in days if d['date'] == next_day), None)
+                        wn = day_info['week_num'] if day_info else 0
+                        doc_nh = {slot_map[a.slot_id].office_id for a in assignments
+                                  if a.doctor_id == doc.id
+                                  and slot_map.get(a.slot_id) is not None
+                                  and slot_map[a.slot_id].office_id != hospital_id
+                                  and slot_map[a.slot_id].date[:4] == next_day[:4]} - {hospital_id}
+                        nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                        nh_offs.sort(key=lambda o: (
+                            0 if o.id not in doc_nh else 1,
+                            len([a for a in assignments
+                                 if slot_map.get(a.slot_id) is not None
+                                 and slot_map[a.slot_id].office_id == o.id
+                                 and slot_map[a.slot_id].date.startswith(next_day[:4])
+                                 and a.doctor_id == doc.id])))
+                        for off in nh_offs:
                             pm_id = f"{next_day}_{off.id}_office_pm"
                             pm_slot = slot_map.get(pm_id)
                             if not pm_slot:
@@ -720,9 +697,22 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                                                           slot_id=hs_id))
                             _update_load(load, doc.id, hs, hospital_id)
                             if ampm == 'office_am':
-                                for off in inp.offices:
-                                    if off.id == hospital_id:
-                                        continue
+                                day_info_35 = next((d for d in days if d['date'] == next_day), None)
+                                wn_35 = day_info_35['week_num'] if day_info_35 else 0
+                                doc_nh_35 = {slot_map[a.slot_id].office_id for a in assignments
+                                             if a.doctor_id == doc.id
+                                             and slot_map.get(a.slot_id) is not None
+                                             and slot_map[a.slot_id].office_id != hospital_id
+                                             and slot_map[a.slot_id].date[:4] == next_day[:4]} - {hospital_id}
+                                nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                                nh_offs.sort(key=lambda o: (
+                                    0 if o.id not in doc_nh_35 else 1,
+                                    len([a for a in assignments
+                                         if slot_map.get(a.slot_id) is not None
+                                         and slot_map[a.slot_id].office_id == o.id
+                                         and slot_map[a.slot_id].date.startswith(next_day[:4])
+                                         and a.doctor_id == doc.id])))
+                                for off in nh_offs:
                                     pm_id = f"{next_day}_{off.id}_office_pm"
                                     pm_slot = slot_map.get(pm_id)
                                     if not pm_slot:
@@ -833,17 +823,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_by_doc_week[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 3:
-                            return 3
-                        if n_nh == 0 and n_sess >= 2:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 4:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 2:
-                            return 1
-                        if n_nh <= 2 and n_sess >= 6:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 2:
+                            deficit += 1
+                        if n_nh <= 1 and n_sess >= 6:
+                            deficit = max(deficit, 1)
+                        return deficit
                     avail_docs.sort(key=lambda d: (
                         0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
                         _variety_deficit(d),
@@ -856,16 +841,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_by_doc_week[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 2:
-                            return 3
-                        if n_nh == 0 and n_sess >= 1:
-                            return 2
-                        if n_nh == 1 and n_sess >= 4:
-                            return 2
-                        if n_nh == 1 and n_sess >= 2:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 1:
+                            deficit += 1
+                        return deficit
                     avail_docs.sort(key=lambda d: (
+                        0 if len(office_variety_by_doc_week[d.id].get(week_num, set()) - {hospital_id}) == 0 else 1,
                         _variety_deficit_non_hosp(d),
                         1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
                         -len(office_variety_by_doc_week[d.id].get(week_num, set())),
@@ -897,22 +878,6 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             continue
         date = day['date']
         week_num = day['week_num']
-        # H8 capacity escape: if hospital office slots for this date
-        # are all full, clear post_call_since for doctors who still
-        # need a hospital slot — they can't get one today, so
-        # blocking them from non-hospital offices only starves them.
-        hosp_office_today = [s for s in slots
-            if s.date == date and s.office_id == hospital_id
-            and s.shift_type in office_shift_types]
-        if hosp_office_today:
-            all_full = all(
-                sum(1 for a in assignments
-                    if a.slot_id == hs.slot_id) >= hs.max_doctors
-                for hs in hosp_office_today)
-            if all_full:
-                for d in inp.doctors:
-                    if load[d.id].get('post_call_since') is not None:
-                        load[d.id]['post_call_since'] = None
         day_office_slots = [s for s in slots
                             if s.date == date
                             and s.shift_type in office_shift_types
@@ -940,17 +905,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                     all_off = office_variety_by_doc_week[d.id].get(week_num, set())
                     n_nh = len(all_off - {hospital_id})
                     n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                    if n_nh == 0 and n_sess >= 3:
-                        return 3
-                    if n_nh == 0 and n_sess >= 2:
-                        return 2
-                    if n_nh <= 1 and n_sess >= 4:
-                        return 2
-                    if n_nh <= 1 and n_sess >= 2:
-                        return 1
-                    if n_nh <= 2 and n_sess >= 6:
-                        return 1
-                    return 0
+                    deficit = max(0, 2 - n_nh)
+                    if deficit > 0 and n_sess >= 2:
+                        deficit += 1
+                    if n_nh <= 1 and n_sess >= 6:
+                        deficit = max(deficit, 1)
+                    return deficit
                 avail_docs.sort(key=lambda d: (
                     0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
                     _variety_deficit_4b(d),
@@ -963,16 +923,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                     all_off = office_variety_by_doc_week[d.id].get(week_num, set())
                     n_nh = len(all_off - {hospital_id})
                     n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                    if n_nh == 0 and n_sess >= 2:
-                        return 3
-                    if n_nh == 0 and n_sess >= 1:
-                        return 2
-                    if n_nh == 1 and n_sess >= 4:
-                        return 2
-                    if n_nh == 1 and n_sess >= 2:
-                        return 1
-                    return 0
+                    deficit = max(0, 2 - n_nh)
+                    if deficit > 0 and n_sess >= 1:
+                        deficit += 1
+                    return deficit
                 avail_docs.sort(key=lambda d: (
+                    0 if len(office_variety_by_doc_week[d.id].get(week_num, set()) - {hospital_id}) == 0 else 1,
                     _variety_deficit_non_hosp_4b(d),
                     1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
                     -len(office_variety_by_doc_week[d.id].get(week_num, set())),
@@ -1040,23 +996,28 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         office_variety_by_doc_week[doc.id][wn].add(hospital_id)
                         am_by_doc_week[doc.id][wn] += 1
                         non_hosp_pm = None
-                        n_off = len(office_variety_by_doc_week[doc.id].get(wn, set()))
-                        if n_off <= 1:
-                            for off in inp.offices:
-                                if off.id == hospital_id:
-                                    continue
-                                pm_id = f"{next_day}_{off.id}_office_pm"
-                                pm_slot = slot_map.get(pm_id)
-                                if not pm_slot:
-                                    continue
-                                if sum(1 for a2 in assignments
-                                       if a2.slot_id == pm_id) >= pm_slot.max_doctors:
-                                    continue
-                                if _is_available(doc.id, pm_slot, assignments,
-                                    slot_map, load, doc_map, hospital_id,
-                                    doc_day_off_entries):
-                                    non_hosp_pm = (pm_id, pm_slot, off.id)
-                                    break
+                        doc_nh_5 = office_variety_by_doc_week[doc.id].get(wn, set()) - {hospital_id}
+                        nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                        nh_offs.sort(key=lambda o: (
+                            0 if o.id not in doc_nh_5 else 1,
+                            len([a for a in assignments
+                                 if slot_map.get(a.slot_id) is not None
+                                 and slot_map[a.slot_id].office_id == o.id
+                                 and slot_map[a.slot_id].date.startswith(next_day[:4])
+                                 and a.doctor_id == doc.id])))
+                        for off in nh_offs:
+                            pm_id = f"{next_day}_{off.id}_office_pm"
+                            pm_slot = slot_map.get(pm_id)
+                            if not pm_slot:
+                                continue
+                            if sum(1 for a2 in assignments
+                                   if a2.slot_id == pm_id) >= pm_slot.max_doctors:
+                                continue
+                            if _is_available(doc.id, pm_slot, assignments,
+                                slot_map, load, doc_map, hospital_id,
+                                doc_day_off_entries):
+                                non_hosp_pm = (pm_id, pm_slot, off.id)
+                                break
                         if non_hosp_pm:
                             pm_id, pm_slot, off_id = non_hosp_pm
                             assignments.append(Assignment(doctor_id=doc.id,
@@ -1212,6 +1173,66 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
             x[(doc_id, slot_id)] = pulp.LpVariable(
                 f"x_{doc_id}_{slot_id}", cat='Binary'
             )
+
+        # H12: Office variety — each doctor must use at least 1 non-hospital
+        # office in any week where they have 3+ sessions (hard constraint).
+        # Build binary variables tracking non-hospital office usage per doctor-week.
+        office_shift_types_ilp = {'office_am', 'office_pm', 'office_late',
+                                   'surgical_am', 'surgical_hosp_pm'}
+        nh_office_ids = [o.id for o in inp.offices if o.id != hospital_id]
+
+        _ilp_first_dow = dt_class(inp.year, inp.month + 1, 1).weekday()
+        _ilp_day_to_week = {}
+        for s in ilp_slots:
+            day_num = int(s.date.split('-')[2])
+            _ilp_day_to_week[s.date] = (day_num + _ilp_first_dow - 1) // 7
+        _ilp_max_week = max(_ilp_day_to_week.values(), default=0) if _ilp_day_to_week else 0
+
+        uses_off_vars = {}
+        for doc in inp.doctors:
+            for wn in range(_ilp_max_week + 1):
+                for off_id in nh_office_ids:
+                    var = pulp.LpVariable(
+                        f"uses_off_{doc.id}_wk{wn}_{off_id}",
+                        cat="Binary"
+                    )
+                    uses_off_vars[(doc.id, wn, off_id)] = var
+
+        for doc in inp.doctors:
+            for wn in range(_ilp_max_week + 1):
+                for off_id in nh_office_ids:
+                    var = uses_off_vars.get((doc.id, wn, off_id))
+                    if not var:
+                        continue
+                    off_slots = [s for s in ilp_slots
+                                 if s.shift_type in office_shift_types_ilp
+                                 and s.office_id == off_id
+                                 and _ilp_day_to_week.get(s.date) == wn
+                                 and (doc.id, s.slot_id) in x]
+                    for slot in off_slots:
+                        prob += (
+                            var >= x[(doc.id, slot.slot_id)],
+                            f"h12_link_{doc.id}_wk{wn}_{off_id}_{slot.slot_id}"
+                        )
+
+        for doc in inp.doctors:
+            for wn in range(_ilp_max_week + 1):
+                week_off_vars = [uses_off_vars[(doc.id, wn, o)]
+                                 for o in nh_office_ids
+                                 if (doc.id, wn, o) in uses_off_vars]
+                if not week_off_vars:
+                    continue
+                doc_week_slots = [s for s in ilp_slots
+                                  if s.shift_type in office_shift_types_ilp
+                                  and _ilp_day_to_week.get(s.date) == wn
+                                  and (doc.id, s.slot_id) in x]
+                sessions_in_week = pulp.lpSum(
+                    x[(doc.id, s.slot_id)] for s in doc_week_slots
+                )
+                prob += (
+                    sessions_in_week - 3 <= 1000 * (1 - pulp.lpSum(week_off_vars)),
+                    f"h12_variety_{doc.id}_wk{wn}"
+                )
 
         # Build per-slot doc lists
         slot_x_docs = {s.slot_id: [] for s in ilp_slots}
@@ -1580,9 +1601,16 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                         slot_map[a2.slot_id].shift_type == 'office_am'
                         for a2 in assignments)
                     if already_has_hosp_am:
-                        for off in inp.offices:
-                            if off.id == hospital_id:
-                                continue
+                        doc_nh_ilp = office_variety_ilp[doc.id].get(week_num, set()) - {hospital_id}
+                        nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                        nh_offs.sort(key=lambda o: (
+                            0 if o.id not in doc_nh_ilp else 1,
+                            len([a for a in assignments
+                                 if slot_map.get(a.slot_id) is not None
+                                 and slot_map[a.slot_id].office_id == o.id
+                                 and slot_map[a.slot_id].date.startswith(date[:4])
+                                 and a.doctor_id == doc.id])))
+                        for off in nh_offs:
                             pm_id = f"{date}_{off.id}_office_pm"
                             pm_slot = slot_map.get(pm_id)
                             if not pm_slot:
@@ -1613,9 +1641,16 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                             else:
                                 pm_by_doc_week[doc.id][week_num] += 1
                             if ampm == 'office_am':
-                                for off in inp.offices:
-                                    if off.id == hospital_id:
-                                        continue
+                                doc_nh_ilp_am = office_variety_ilp[doc.id].get(week_num, set()) - {hospital_id}
+                                nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                                nh_offs.sort(key=lambda o: (
+                                    0 if o.id not in doc_nh_ilp_am else 1,
+                                    len([a for a in assignments
+                                         if slot_map.get(a.slot_id) is not None
+                                         and slot_map[a.slot_id].office_id == o.id
+                                         and slot_map[a.slot_id].date.startswith(date[:4])
+                                         and a.doctor_id == doc.id])))
+                                for off in nh_offs:
                                     pm_id = f"{date}_{off.id}_office_pm"
                                     pm_slot = slot_map.get(pm_id)
                                     if not pm_slot:
@@ -1630,23 +1665,6 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                                         pm_by_doc_week[doc.id][week_num] += 1
                                         break
                             break
-            # H8 capacity escape: if hospital office slots for this date
-            # are all full, clear post_call_since for doctors who still
-            # need a hospital slot — they can't get one today, so
-            # blocking them from non-hospital offices only starves them.
-            if hospital_id:
-                hosp_office_today = [s for s in slots
-                    if s.date == date and s.office_id == hospital_id
-                    and s.shift_type in office_shift_types_ilp]
-                if hosp_office_today:
-                    all_full = all(
-                        sum(1 for a in assignments
-                            if a.slot_id == hs.slot_id) >= hs.max_doctors
-                        for hs in hosp_office_today)
-                    if all_full:
-                        for d in inp.doctors:
-                            if load[d.id].get('post_call_since') is not None:
-                                load[d.id]['post_call_since'] = None
             day_office_slots = [s for s in slots
                 if s.date == date
                 and s.shift_type in office_shift_types_ilp
@@ -1678,17 +1696,12 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_ilp[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 3:
-                            return 3
-                        if n_nh == 0 and n_sess >= 2:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 4:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 2:
-                            return 1
-                        if n_nh <= 2 and n_sess >= 6:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 2:
+                            deficit += 1
+                        if n_nh <= 1 and n_sess >= 6:
+                            deficit = max(deficit, 1)
+                        return deficit
                     avail_docs.sort(key=lambda d: (
                         0 if _ilp_is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
                         _variety_deficit_ilp(d),
@@ -1701,16 +1714,12 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_ilp[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 2:
-                            return 3
-                        if n_nh == 0 and n_sess >= 1:
-                            return 2
-                        if n_nh == 1 and n_sess >= 4:
-                            return 2
-                        if n_nh == 1 and n_sess >= 2:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 1:
+                            deficit += 1
+                        return deficit
                     avail_docs.sort(key=lambda d: (
+                        0 if len(office_variety_ilp[d.id].get(week_num, set()) - {hospital_id}) == 0 else 1,
                         _variety_deficit_non_hosp_ilp(d),
                         1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0,
                         -len(office_variety_ilp[d.id].get(week_num, set())),
@@ -1777,17 +1786,12 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_ilp[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 3:
-                            return 3
-                        if n_nh == 0 and n_sess >= 2:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 4:
-                            return 2
-                        if n_nh <= 1 and n_sess >= 2:
-                            return 1
-                        if n_nh <= 2 and n_sess >= 6:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 2:
+                            deficit += 1
+                        if n_nh <= 1 and n_sess >= 6:
+                            deficit = max(deficit, 1)
+                        return deficit
                     avail_docs.sort(key=lambda d: (
                         0 if _ilp_is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
                         _variety_deficit_ilp_4b(d),
@@ -1800,16 +1804,12 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                         all_off = office_variety_ilp[d.id].get(week_num, set())
                         n_nh = len(all_off - {hospital_id})
                         n_sess = sessions_by_doc_week[d.id].get(week_num, 0)
-                        if n_nh == 0 and n_sess >= 2:
-                            return 3
-                        if n_nh == 0 and n_sess >= 1:
-                            return 2
-                        if n_nh == 1 and n_sess >= 4:
-                            return 2
-                        if n_nh == 1 and n_sess >= 2:
-                            return 1
-                        return 0
+                        deficit = max(0, 2 - n_nh)
+                        if deficit > 0 and n_sess >= 1:
+                            deficit += 1
+                        return deficit
                     avail_docs.sort(key=lambda d: (
+                        0 if len(office_variety_ilp[d.id].get(week_num, set()) - {hospital_id}) == 0 else 1,
                         _variety_deficit_non_hosp_ilp_4b(d),
                         1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0,
                         -len(office_variety_ilp[d.id].get(week_num, set())),
@@ -1870,21 +1870,26 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                                 office_variety_ilp[doc.id][wn].add(hospital_id)
                                 am_by_doc_week[doc.id][wn] += 1
                                 non_hosp_pm = None
-                                n_off = len(office_variety_ilp[doc.id].get(wn, set()))
-                                if n_off <= 1:
-                                    for off in inp.offices:
-                                        if off.id == hospital_id:
-                                            continue
-                                        pm_id = f"{next_day}_{off.id}_office_pm"
-                                        pm_slot = slot_map.get(pm_id)
-                                        if not pm_slot:
-                                            continue
-                                        if sum(1 for a2 in assignments
-                                               if a2.slot_id == pm_id) >= pm_slot.max_doctors:
-                                            continue
-                                        if is_avail(doc.id, pm_slot):
-                                            non_hosp_pm = (pm_id, pm_slot, off.id)
-                                            break
+                                doc_nh_ilp_5 = office_variety_ilp[doc.id].get(wn, set()) - {hospital_id}
+                                nh_offs = [off for off in inp.offices if off.id != hospital_id]
+                                nh_offs.sort(key=lambda o: (
+                                    0 if o.id not in doc_nh_ilp_5 else 1,
+                                    len([a for a in assignments
+                                         if slot_map.get(a.slot_id) is not None
+                                         and slot_map[a.slot_id].office_id == o.id
+                                         and slot_map[a.slot_id].date.startswith(next_day[:4])
+                                         and a.doctor_id == doc.id])))
+                                for off in nh_offs:
+                                    pm_id = f"{next_day}_{off.id}_office_pm"
+                                    pm_slot = slot_map.get(pm_id)
+                                    if not pm_slot:
+                                        continue
+                                    if sum(1 for a2 in assignments
+                                           if a2.slot_id == pm_id) >= pm_slot.max_doctors:
+                                        continue
+                                    if is_avail(doc.id, pm_slot):
+                                        non_hosp_pm = (pm_id, pm_slot, off.id)
+                                        break
                                 if non_hosp_pm:
                                     pm_id, pm_slot, off_id = non_hosp_pm
                                     assign(doc.id, pm_slot)
