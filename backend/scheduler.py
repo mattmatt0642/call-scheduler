@@ -68,15 +68,30 @@ def _is_blocked_by_timeoff(entry, slot_type):
         et = entry.get("endTime")
         shift_times = SHIFT_TIMES.get(slot_type)
         if st and et and shift_times:
-            return _times_overlap(shift_times[0], shift_times[1], st, et)
+            return _times_overlap_strings(shift_times[0], shift_times[1], st, et)
         return True
     return False
+
+
+def _times_overlap_strings(s1, e1, s2, e2):
+    """Check if two time-string intervals overlap. Handles overnight (e < s)."""
+    def to_min(t):
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+    a1, b1 = to_min(s1), to_min(e1)
+    a2, b2 = to_min(s2), to_min(e2)
+    if b1 <= a1:
+        b1 += 24 * 60
+    if b2 <= a2:
+        b2 += 24 * 60
+    return a1 < b2 and a2 < b1
 
 
 def _init_load(doctors, offices):
     """
     Initialize per-doctor load tracking dict.
-    Keys: doctor_id -> dict with counts and post_call_since.
+    Keys: doctor_id -> dict with counts, session breakdown, office visits,
+    and post_call_restricted boolean.
     """
     load = {}
     for d in doctors:
@@ -85,8 +100,12 @@ def _init_load(doctors, offices):
             'weekday_night_calls': 0,
             'friday_night_calls': 0,
             'weekend_blocks': 0,
-            'total_sessions': 0,
-            'post_call_since': None,
+            'sessions': 0,
+            'am_sessions': 0,
+            'pm_sessions': 0,
+            'late_sessions': 0,
+            'office_visits': {o.id: 0 for o in offices},
+            'post_call_restricted': False,
         }
     return load
 
@@ -94,113 +113,103 @@ def _init_load(doctors, offices):
 def _update_load(load, doctor_id, slot, hospital_id):
     """
     Update load tracking after assigning doctor_id to slot.
-    - call_day: weekday_day_calls += 1, post_call_since = slot.date
-    - call_night: weekday_night_calls or friday_night_calls += 1, post_call_since = slot.date
-    - call_weekend: weekend_blocks += 1, post_call_since = slot.date
+    - call_day: weekday_day_calls += 1, post_call_restricted = True
+    - call_night: weekday_night_calls or friday_night_calls += 1, post_call_restricted = True
+    - call_weekend: weekend_blocks += 1, post_call_restricted = True
     - call_weekend_sun: (counted as part of weekend block, no separate increment)
-    - office_am/office_pm/office_late/surgical_am/surgical_hosp_pm: total_sessions += 1
-    - If slot is at hospital and post_call_since is set, clear post_call_since
+    - office_am/office_pm/office_late/surgical_am/surgical_hosp_pm:
+      sessions += 1, office_visits updated, post_call_restricted cleared if at hospital
     """
     entry = load[doctor_id]
     shift = slot.shift_type
     if shift == 'call_day':
         entry['weekday_day_calls'] += 1
-        entry['post_call_since'] = slot.date
+        entry['post_call_restricted'] = True
     elif shift == 'call_night':
         if slot.call_balance_group == 'friday_night':
             entry['friday_night_calls'] += 1
         else:
             entry['weekday_night_calls'] += 1
-        entry['post_call_since'] = slot.date
+        entry['post_call_restricted'] = True
     elif shift == 'call_weekend':
         entry['weekend_blocks'] += 1
-        entry['post_call_since'] = slot.date
+        entry['post_call_restricted'] = True
     elif shift == 'call_weekend_sun':
-        entry['post_call_since'] = slot.date
-    elif shift in ('office_am', 'office_pm', 'office_late',
-                    'surgical_am', 'surgical_hosp_pm'):
-        entry['total_sessions'] += 1
-        if slot.office_id == hospital_id and entry['post_call_since'] is not None:
-            if slot.date >= entry['post_call_since']:
-                entry['post_call_since'] = None
+        # Sunday of weekend block — reinforce the restriction.
+        # The Saturday slot already counted the block; Sunday does not re-count.
+        entry['post_call_restricted'] = True
+    elif shift in ('office_am', 'surgical_am'):
+        entry['am_sessions'] += 1
+        entry['sessions'] += 1
+        entry['office_visits'][slot.office_id] = entry['office_visits'].get(slot.office_id, 0) + 1
+        if entry['post_call_restricted'] and slot.office_id == hospital_id:
+            entry['post_call_restricted'] = False
+    elif shift == 'office_pm':
+        entry['pm_sessions'] += 1
+        entry['sessions'] += 1
+        entry['office_visits'][slot.office_id] = entry['office_visits'].get(slot.office_id, 0) + 1
+        if entry['post_call_restricted'] and slot.office_id == hospital_id:
+            entry['post_call_restricted'] = False
+    elif shift == 'office_late':
+        entry['late_sessions'] += 1
+        entry['sessions'] += 1
+        entry['office_visits'][slot.office_id] = entry['office_visits'].get(slot.office_id, 0) + 1
+        if entry['post_call_restricted'] and slot.office_id == hospital_id:
+            entry['post_call_restricted'] = False
 
 
-def call_debt_with_preference(doc, load, slot, historical_balance):
+def _avg_hist(key, eligible_ids, historical_balance) -> float:
+    vals = [historical_balance.get(did, {}).get(key, 0) for did in eligible_ids]
+    return sum(vals) / max(len(vals), 1)
+
+
+def call_debt_with_preference(doc_id, date_str, shift_type,
+                               load, inp, doc_map) -> float:
     """
-    Compute a 'debt' score for assigning doc to a call slot.
-    Uses preference-weighted scoring for weekday day/night calls.
-    Lower is better (more deserving of the assignment).
+    Priority score for weekday_day and weekday_night assignments.
+    Higher = higher priority. Preferences apply here.
+    Uses cumulative (historical + current) count for fairness.
     """
-    entry = load[doc.id]
-    bg = slot.call_balance_group
-    hist = historical_balance.get(doc.id, {})
+    doc = doc_map[doc_id]
+    dow = dt_class.fromisoformat(date_str).weekday()
 
-    if bg == 'weekday_day':
-        current = entry['weekday_day_calls']
-        cumulative = hist.get('weekday_day', 0) + current
-        remaining = max(0, doc.max_weekday_day_calls - current)
-    elif bg == 'weekday_night':
-        current = entry['weekday_night_calls']
-        cumulative = hist.get('weekday_night', 0) + current
-        remaining = max(0, doc.max_weekday_night_calls - current)
-    elif bg == 'friday_night':
-        current = entry['friday_night_calls']
-        cumulative = hist.get('friday_night', 0) + current
-        remaining = max(0, doc.max_friday_night_calls - current)
-    elif bg == 'weekend_block':
-        current = entry['weekend_blocks']
-        cumulative = hist.get('weekend_blocks', 0) + current
-        remaining = max(0, doc.max_weekend_blocks - current)
+    group = "weekday_day" if shift_type == "call_day" else "weekday_night"
+    load_key = "weekday_day_calls" if group == "weekday_day" else "weekday_night_calls"
+
+    eligible_ids = [d.id for d in inp.doctors if d.hospital_call_eligible]
+    hist = inp.historical_balance.get(doc_id, {}).get(group, 0)
+    avg = _avg_hist(group, eligible_ids, inp.historical_balance)
+    this_month = load[doc_id][load_key]
+    base = (avg - hist) - (this_month * 1.5)
+
+    # Preference: +3.0 preferred, -1.5 non-preferred, 0.0 no preference set
+    if doc.preferred_call_days:
+        pref = 3.0 if dow in doc.preferred_call_days else -1.5
     else:
-        return 9999
+        pref = 0.0
 
-    if remaining <= 0:
-        return 9999
+    # Day/night nudge (low weight — within weekday groups only)
+    nudge = 0.0
+    if shift_type == "call_day" and doc.day_night_preference == "day":
+        nudge = 0.5
+    if shift_type == "call_night" and doc.day_night_preference == "night":
+        nudge = 0.5
 
-    balance_score = cumulative
-    if doc.preferred_call_days and bg in ('weekday_day', 'weekday_night'):
-        dow = dt_class.fromisoformat(slot.date).weekday()
-        if dow in doc.preferred_call_days:
-            balance_score -= 0.1
-        else:
-            balance_score += 0.05
-
-    return balance_score
+    return base + pref + nudge
 
 
-def call_debt_balance_only(doc, load, slot, historical_balance):
+def call_debt_balance_only(doc_id, balance_key, load, inp) -> float:
     """
-    Compute a 'debt' score for assigning doc to a call slot.
-    Uses balance-only scoring (no preference influence).
-    Used for friday_night and weekend_block calls.
+    Priority score for friday_night and weekend_block assignments.
+    Preferences have ZERO influence. Purely historical balance.
     """
-    entry = load[doc.id]
-    bg = slot.call_balance_group
-    hist = historical_balance.get(doc.id, {})
-
-    if bg == 'weekday_day':
-        current = entry['weekday_day_calls']
-        cumulative = hist.get('weekday_day', 0) + current
-        remaining = max(0, doc.max_weekday_day_calls - current)
-    elif bg == 'weekday_night':
-        current = entry['weekday_night_calls']
-        cumulative = hist.get('weekday_night', 0) + current
-        remaining = max(0, doc.max_weekday_night_calls - current)
-    elif bg == 'friday_night':
-        current = entry['friday_night_calls']
-        cumulative = hist.get('friday_night', 0) + current
-        remaining = max(0, doc.max_friday_night_calls - current)
-    elif bg == 'weekend_block':
-        current = entry['weekend_blocks']
-        cumulative = hist.get('weekend_blocks', 0) + current
-        remaining = max(0, doc.max_weekend_blocks - current)
-    else:
-        return 9999
-
-    if remaining <= 0:
-        return 9999
-
-    return cumulative
+    load_key = ("friday_night_calls" if balance_key == "friday_night"
+                else "weekend_blocks")
+    eligible_ids = [d.id for d in inp.doctors if d.hospital_call_eligible]
+    hist = inp.historical_balance.get(doc_id, {}).get(balance_key, 0)
+    avg = _avg_hist(balance_key, eligible_ids, inp.historical_balance)
+    this_month = load[doc_id][load_key]
+    return (avg - hist) - (this_month * 1.5)
 
 
 def _is_available(doc_id, slot, assignments, slot_map, load,
@@ -211,7 +220,7 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
     - Slot date/period conflicts with doctor's time-off entries
     - Doctor has an overlapping assignment
     - Doctor's allowed_offices doesn't include slot.office_id
-    - Post-call restriction (H8): doctor has post_call_since set and
+    - Post-call restriction (H8): doctor has post_call_restricted set and
       this slot is not at the hospital
     """
     doc = doc_map.get(doc_id)
@@ -236,29 +245,10 @@ def _is_available(doc_id, slot, assignments, slot_map, load,
     if doc.allowed_offices is not None and slot.office_id not in doc.allowed_offices:
         return False
 
-    if slot.shift_type not in ('call_day', 'call_night',
-                                'call_weekend', 'call_weekend_sun'):
+    # Post-call restriction (H8): uses the boolean from load dict
+    if load[doc_id]['post_call_restricted']:
         if slot.office_id != hospital_id:
-            doc_assigns = sorted(
-                [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
-                key=lambda x: (x[0].date, x[0].start_time)
-            )
-            all_items = [(s, False) for s, _ in doc_assigns] + [(slot, True)]
-            all_items.sort(key=lambda x: (x[0].date, x[0].start_time))
-            post_call_restricted = False
-            for s, is_current in all_items:
-                if post_call_restricted:
-                    if s.shift_type in ('office_am', 'office_pm', 'office_late',
-                                        'surgical_am', 'surgical_hosp_pm'):
-                        if s.office_id == hospital_id:
-                            post_call_restricted = False
-                            continue
-                        else:
-                            if is_current:
-                                return False
-                if s.shift_type in ('call_day', 'call_night',
-                                    'call_weekend', 'call_weekend_sun'):
-                    post_call_restricted = True
+            return False
 
     for a in assignments:
         if a.doctor_id != doc_id:
@@ -468,11 +458,12 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                 if len([a for a in assignments if a.slot_id == p_sun_id]) >= sun_slot.max_doctors:
                     continue
             if slot.call_balance_group in ('friday_night', 'weekend_block'):
-                debt = call_debt_balance_only(doc, load, slot, inp.historical_balance)
+                debt = call_debt_balance_only(doc.id, slot.call_balance_group, load, inp)
             else:
-                debt = call_debt_with_preference(doc, load, slot, inp.historical_balance)
+                debt = call_debt_with_preference(doc.id, slot.date, slot.shift_type,
+                                                  load, inp, doc_map)
             result.append((debt, doc))
-        result.sort(key=lambda x: x[0])
+        result.sort(key=lambda x: x[0], reverse=True)
         return result
 
     def _do_assign(slot, doc, p_sun_id=None):
@@ -765,28 +756,9 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
             return (1, ranking.index(slot_obj.office_id))
         return (1, len(ranking))
 
-    def _is_post_call_restricted(doc_id, assignments, slot_map, hospital_id,
-                                   current_slot=None):
-        doc_assigns = sorted(
-            [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
-            key=lambda x: (x[0].date, x[0].start_time)
-        )
-        if current_slot:
-            doc_assigns = [(s, a) for s, a in doc_assigns
-                           if s.date < current_slot.date or
-                           (s.date == current_slot.date and s.start_time < current_slot.start_time)]
-        post_call_restricted = False
-        for s, _ in doc_assigns:
-            if post_call_restricted:
-                if s.shift_type in ('office_am', 'office_pm', 'office_late',
-                                    'surgical_am', 'surgical_hosp_pm'):
-                    if s.office_id == hospital_id:
-                        post_call_restricted = False
-                        continue
-            if s.shift_type in ('call_day', 'call_night',
-                                'call_weekend', 'call_weekend_sun'):
-                post_call_restricted = True
-        return post_call_restricted
+    def _is_post_call_restricted(doc_id):
+        """Check if doctor is post-call restricted using the load dict boolean."""
+        return load[doc_id]['post_call_restricted']
 
     for day in days:
             if day['is_weekend'] or day['date'] in global_day_off_set:
@@ -834,7 +806,7 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                             deficit = max(deficit, 1)
                         return deficit
                     avail_docs.sort(key=lambda d: (
-                        0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
+                        0 if _is_post_call_restricted(d.id) else 1,
                         _variety_deficit(d),
                         1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
                         -len(office_variety_by_doc_week[d.id].get(week_num, set())),
@@ -916,7 +888,7 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                         deficit = max(deficit, 1)
                     return deficit
                 avail_docs.sort(key=lambda d: (
-                    0 if _is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
+                    0 if _is_post_call_restricted(d.id) else 1,
                     _variety_deficit_4b(d),
                     1 if slot_obj.office_id in office_variety_by_doc_week[d.id].get(week_num, set()) else 0,
                     -len(office_variety_by_doc_week[d.id].get(week_num, set())),
@@ -1494,7 +1466,7 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
 
         # Phase 2: Greedy office session filling
         # Use ILP call assignments as locked, then fill office sessions.
-        # Replay all ILP assignments in chronological order so post_call_since
+        # Replay all ILP assignments in chronological order so post_call_restricted
         # state is correct when the office loop starts.
         doc_map = {d.id: d for d in inp.doctors}
         day_off_dates = inp.day_off_dates
@@ -1550,28 +1522,9 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                 return (1, ranking.index(slot_obj.office_id))
             return (1, len(ranking) if ranking else 0)
 
-        def _ilp_is_post_call_restricted(doc_id, assignments, slot_map, hospital_id,
-                                           current_slot=None):
-            doc_assigns = sorted(
-                [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc_id],
-                key=lambda x: (x[0].date, x[0].start_time)
-            )
-            if current_slot:
-                doc_assigns = [(s, a) for s, a in doc_assigns
-                               if s.date < current_slot.date or
-                               (s.date == current_slot.date and s.start_time < current_slot.start_time)]
-            post_call_restricted = False
-            for s, _ in doc_assigns:
-                if post_call_restricted:
-                    if s.shift_type in ('office_am', 'office_pm', 'office_late',
-                                        'surgical_am', 'surgical_hosp_pm'):
-                        if s.office_id == hospital_id:
-                            post_call_restricted = False
-                            continue
-                if s.shift_type in ('call_day', 'call_night',
-                                    'call_weekend', 'call_weekend_sun'):
-                    post_call_restricted = True
-            return post_call_restricted
+        def _ilp_is_post_call_restricted(doc_id):
+            """Check if doctor is post-call restricted using the load dict boolean."""
+            return load[doc_id]['post_call_restricted']
 
         all_sorted_dates = sorted(ilp_by_date.keys())
         prev_date_replayed = set()
@@ -1594,7 +1547,7 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
             # restriction, then also assign a non-hospital PM for variety.
             if hospital_id:
                 for doc in inp.doctors:
-                    if load[doc.id]['post_call_since'] is None:
+                    if not load[doc.id]['post_call_restricted']:
                         continue
                     doc_day_off_entries = _get_day_off_entries(day_off_dates, doc.id)
                     already_has_hosp_am = any(
@@ -1707,7 +1660,7 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                             deficit = max(deficit, 1)
                         return deficit
                     avail_docs.sort(key=lambda d: (
-                        0 if _ilp_is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
+                        0 if _ilp_is_post_call_restricted(d.id) else 1,
                         _variety_deficit_ilp(d),
                         1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0,
                         -len(office_variety_ilp[d.id].get(week_num, set())),
@@ -1763,8 +1716,8 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                     for hs in hosp_office_today)
                 if all_full:
                     for d in inp.doctors:
-                        if load[d.id].get('post_call_since') is not None:
-                            load[d.id]['post_call_since'] = None
+                        if load[d.id]['post_call_restricted']:
+                            load[d.id]['post_call_restricted'] = False
             day_office_slots = [s for s in slots
                 if s.date == date
                 and s.shift_type in office_shift_types_ilp
@@ -1797,7 +1750,7 @@ def schedule_ilp(inp: ScheduleInput) -> ScheduleResult:
                             deficit = max(deficit, 1)
                         return deficit
                     avail_docs.sort(key=lambda d: (
-                        0 if _ilp_is_post_call_restricted(d.id, assignments, slot_map, hospital_id, current_slot=slot_obj) else 1,
+                        0 if _ilp_is_post_call_restricted(d.id) else 1,
                         _variety_deficit_ilp_4b(d),
                         1 if slot_obj.office_id in office_variety_ilp[d.id].get(week_num, set()) else 0,
                         -len(office_variety_ilp[d.id].get(week_num, set())),

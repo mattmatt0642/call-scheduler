@@ -49,8 +49,8 @@ for surg in surgical:
     assert paired is not None, f"No surgical_hosp_pm paired with surgical_am on {date}"
 
 # Mon+Thu in Sep 2026: Mon(7,14,21,28)=4, Thu(3,10,17,24)=4 → 8 days
-# 2 non-hospital offices → 16 office_late slots
-assert len(late) == 16, f"16 late slots (8 Mon/Thu days * 2 offices), got {len(late)}"
+# 2 non-hospital offices + 1 hospital = 3 offices × 8 days = 24 office_late slots
+assert len(late) == 24, f"24 late slots (8 Mon/Thu days * 3 offices), got {len(late)}"
 
 # Restricted Tuesdays: Sep 1, 15, 29 → 3 days × 2 hospital office slots (office_am+office_pm) = 6
 assert len(restricted) == 6, f"6 restricted Tuesday hospital office slots, got {len(restricted)}"
