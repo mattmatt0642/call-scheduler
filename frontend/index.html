@@ -7,7 +7,7 @@
 <meta name="description" content="Automated on-call and office schedule generator for medical practices" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" />
 <title>Call Scheduler</title>
-<link rel="stylesheet" href="css/style.css?v=5" />
+<link rel="stylesheet" href="css/style.css?v=8" />
 </head>
 <body>
 <noscript><div style="padding:2rem;text-align:center;font-family:sans-serif;color:#333;">Call Scheduler requires JavaScript to run. Please enable JavaScript in your browser settings.</div></noscript>
@@ -208,7 +208,7 @@
 <div id="wiz-schedule-preview" class="wiz-schedule-preview hidden">
 <div class="sched-header">
 <div>
-<h2 class="sched-title" id="wiz-sched-month-label"></h2>
+<h3 class="sched-title" id="wiz-sched-month-label"></h3>
 </div>
 <div class="flex-row">
 <div class="month-nav">
@@ -216,7 +216,26 @@
 <span class="month-nav-label" id="wiz-sched-nav-label"></span>
 <button class="month-nav-btn" aria-label="Next month" onclick="changeWizScheduleMonth(1)">&rsaquo;</button>
 </div>
-<button class="btn btn-sm btn-ghost" onclick="handleExportSchedule()">&darr; CSV</button>
+<div class="export-dropdown">
+        <button class="btn btn-sm btn-ghost dropdown-toggle" onclick="toggleExportDropdown(this)" aria-haspopup="true" aria-expanded="false">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Export
+        </button>
+        <div class="dropdown-menu" role="menu">
+          <button class="dropdown-item" role="menuitem" onclick="handleDownloadICS()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M4 7h6M4 9.5h6M7 4.5v5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Download .ics
+          </button>
+          <button class="dropdown-item" role="menuitem" onclick="handleOpenGoogleCalendar()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 3v4l2.5 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Open in Google Calendar
+          </button>
+          <button class="dropdown-item" role="menuitem" onclick="handleExportSchedule()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1M10 3V1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Download CSV
+          </button>
+        </div>
+      </div>
 </div>
 </div>
 <div class="sched-stats">
@@ -272,7 +291,26 @@
         <span class="month-nav-label" id="sched-nav-label">Sep 2026</span>
         <button class="month-nav-btn" aria-label="Next month" onclick="changeScheduleMonth(1)">&rsaquo;</button>
       </div>
-      <button class="btn btn-sm btn-ghost" onclick="handleExportSchedule()">&darr; CSV</button>
+<div class="export-dropdown">
+        <button class="btn btn-sm btn-ghost dropdown-toggle" onclick="toggleExportDropdown(this)" aria-haspopup="true" aria-expanded="false">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Export
+        </button>
+        <div class="dropdown-menu" role="menu">
+          <button class="dropdown-item" role="menuitem" onclick="handleDownloadICS()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M4 7h6M4 9.5h6M7 4.5v5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Download .ics
+          </button>
+          <button class="dropdown-item" role="menuitem" onclick="handleOpenGoogleCalendar()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.2"/><path d="M7 3v4l2.5 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Open in Google Calendar
+          </button>
+          <button class="dropdown-item" role="menuitem" onclick="handleExportSchedule()">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6h12M4 3V1M10 3V1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            Download CSV
+          </button>
+        </div>
+      </div>
       <button class="btn btn-sm btn-danger" onclick="handleClearMonth()">Clear</button>
     </div>
   </div>
@@ -331,10 +369,10 @@
 
 <script defer src="js/storage.js?v=4"></script>
 <script defer src="js/api.js?v=4"></script>
-<script defer src="js/calendar.js?v=4"></script>
-<script defer src="js/doctor_config.js?v=4"></script>
+<script defer src="js/calendar.js?v=5"></script>
+<script defer src="js/doctor_config.js?v=5"></script>
 <script defer src="js/auth.js?v=4"></script>
-<script defer src="js/app.js?v=4"></script>
+<script defer src="js/app.js?v=5"></script>
 <div class="toast-container" id="toast-container"></div>
 </body>
 </html>
