@@ -96,7 +96,13 @@ html, body {
   letter-spacing: -0.01em;
 }
 .app-header h1 span {
- color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.theme-logo {
+  height: 32px;
+  width: auto;
+  object-fit: contain;
+  vertical-align: middle;
 }
 
 /* ---- Tabs ---- */

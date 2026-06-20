@@ -267,8 +267,8 @@ function renderWizardDoctors() {
     let html = '<div class="entity-list">';
     html += STATE.doctors.map((doc) => {
       const initials = doc.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
-      const AVATAR_COLORS = ['#4f8ff7','#34d399','#a78bfa','#2dd4bf','#fbbf24','#f87171'];
-const avatarColor = AVATAR_COLORS[STATE.doctors.indexOf(doc) % AVATAR_COLORS.length];
+      const avatarColorSet = THEME_CONFIG.avatarColors || ['#4f8ff7','#34d399','#a78bfa','#2dd4bf','#fbbf24','#f87171'];
+const avatarColor = avatarColorSet[STATE.doctors.indexOf(doc) % avatarColorSet.length];
 return `<div class="entity-card fade-in-item">
   <div class="avatar" style="background:${avatarColor}">${initials}</div>
   <div class="info">

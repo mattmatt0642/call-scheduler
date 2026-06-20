@@ -1,0 +1,11 @@
+{
+  "id": "default",
+  "name": "Call Scheduler",
+  "tagline": "Automated on-call scheduling for medical practices",
+  "logoUrl": null,
+  "faviconEmoji": "📋",
+  "faviconUrl": null,
+  "footer": null,
+  "colors": null,
+  "avatarColors": null
+}
