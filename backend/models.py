@@ -204,7 +204,7 @@ def get_days_in_month(year: int, month: int) -> List[Dict]:
 def get_nth_tuesdays(year: int, month: int) -> List[str]:
     """
     Returns the dates of the 1st, 3rd, and 5th Tuesdays in the month.
-    Only returns teh Tuesdays that actually exist - a month has either 4 or 5 Tuesdays.
+    Only returns the Tuesdays that actually exist - a month has either 4 or 5 Tuesdays.
     These are the restricted-capacity hspital office days (H2).
 
     Returns: list of "YYYY-MM-DD" strings, length 2 or 3.
@@ -280,3 +280,24 @@ def prev_date(date_str: str) -> str:
     """
     d = date.fromisoformat(date_str)
     return (d - timedelta(days=1)).isoformat()
+
+
+SHIFT_TIMES = {
+    "office_am": ("08:00", "12:00"),
+    "office_pm": ("13:00", "17:00"),
+    "office_late": ("13:30", "18:30"),
+    "call_day": ("07:00", "19:00"),
+    "call_night": ("19:00", "07:00"),
+    "surgical_am": ("07:00", "12:00"),
+    "surgical_hosp_pm": ("13:00", "17:00"),
+}
+
+SHIFT_PERIODS = {
+    "office_am": "morning",
+    "office_pm": "afternoon",
+    "office_late": "afternoon",
+    "call_day": "all_day",
+    "call_night": "all_day",
+    "surgical_am": "morning",
+    "surgical_hosp_pm": "afternoon",
+}
