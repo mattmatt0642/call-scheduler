@@ -267,8 +267,10 @@ function renderWizardDoctors() {
     let html = '<div class="entity-list">';
     html += STATE.doctors.map((doc) => {
       const initials = doc.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2);
-      return `<div class="entity-card">
-  <div class="avatar">${initials}</div>
+      const AVATAR_COLORS = ['#4f8ff7','#34d399','#a78bfa','#2dd4bf','#fbbf24','#f87171'];
+const avatarColor = AVATAR_COLORS[STATE.doctors.indexOf(doc) % AVATAR_COLORS.length];
+return `<div class="entity-card fade-in-item">
+  <div class="avatar" style="background:${avatarColor}">${initials}</div>
   <div class="info">
   <div class="name">${escapeHtml(doc.name)}</div>
   <div class="toggles">
@@ -303,9 +305,10 @@ function renderWizardOffices() {
     let html = '<div class="entity-list">';
     html += STATE.offices.map(off => {
       const icon = off.isHospital ? '⌁' : '○';
-      const avatarCls = off.isHospital ? 'avatar office-hospital-avatar' : 'avatar';
-      return `<div class="entity-card">
-  <div class="${avatarCls}">${icon}</div>
+      const avatarColor = off.isHospital ? '#4f8ff7' : '#2dd4bf';
+      const avatarCls = 'avatar';
+      return `<div class="entity-card fade-in-item">
+  <div class="${avatarCls}" style="background:${avatarColor}">${icon}</div>
   <div class="info">
   <input type="text" class="doc-name-input office-name-input" value="${escapeHtml(off.name)}" onchange="updateOfficeField('${off.id}', 'name', this.value)"/>
   <div class="office-toggles-row">
@@ -921,12 +924,61 @@ async function handleExportSchedule() {
 }
 
 function downloadBlob(content, filename) {
-	const blob = new Blob([content], { type: 'text/csv' });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement('a');
-	a.href = url; a.download = filename; a.click();
-	setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
+ 	const blob = new Blob([content], { type: 'text/csv' });
+ 	const url = URL.createObjectURL(blob);
+ 	const a = document.createElement('a');
+ 	a.href = url; a.download = filename; a.click();
+ 	setTimeout(() => URL.revokeObjectURL(url), 2000);
+ }
+
+ function toggleExportDropdown(btn) {
+ 	const dropdown = btn.closest('.export-dropdown');
+ 	const menu = dropdown.querySelector('.dropdown-menu');
+ 	const isOpen = menu.classList.toggle('open');
+ 	btn.setAttribute('aria-expanded', String(isOpen));
+ }
+
+ function closeExportDropdowns() {
+ 	document.querySelectorAll('.dropdown-menu.open').forEach(m => m.classList.remove('open'));
+ 	document.querySelectorAll('.dropdown-toggle[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+ }
+
+ function handleDownloadICS() {
+ 	closeExportDropdowns();
+ 	const activeTab = document.querySelector('.tab-pane.active');
+ 	let year, month, data;
+ 	if (activeTab?.id === 'tab-schedule') {
+ 		year = currentScheduleYear; month = currentScheduleMonth;
+ 		const mk = getMonthKey(year, month);
+ 		data = STATE.schedules[mk];
+ 	} else {
+ 		year = wizViewYear; month = wizViewMonth;
+ 		const mk = getMonthKey(year, month);
+ 		data = STATE.schedules[mk];
+ 	}
+ 	if (!data) { alertMsg('No schedule to export.'); return; }
+ 	downloadICS(year, month, data);
+ }
+
+ function handleOpenGoogleCalendar() {
+ 	closeExportDropdowns();
+ 	let year, month, data;
+ 	if (document.querySelector('#tab-schedule.active')) {
+ 		year = currentScheduleYear; month = currentScheduleMonth;
+ 		const mk = getMonthKey(year, month);
+ 		data = STATE.schedules[mk];
+ 	} else {
+ 		year = wizViewYear; month = wizViewMonth;
+ 		const mk = getMonthKey(year, month);
+ 		data = STATE.schedules[mk];
+ 	}
+ 	if (!data) { alertMsg('No schedule to export.'); return; }
+ 	openGoogleCalendar(year, month, data);
+ }
+
+ document.addEventListener('click', e => {
+ 	if (!e.target.closest('.export-dropdown')) closeExportDropdowns();
+ });
 
 // ── Tab switching ────────────────────────────────────────────────────────────
 
