@@ -1,17 +1,7 @@
 from models import (ShiftSlot, Office, CustomRestriction,
     get_days_in_month, get_nth_tuesdays, get_weekend_blocks,
-    get_call_balance_group)
+    get_call_balance_group, SHIFT_TIMES)
 from typing import List, Optional
-
-SHIFT_TIMES = {
-    "office_am": ("08:00", "12:00"),
-    "office_pm": ("13:00", "17:00"),
-    "office_late": ("13:30", "18:30"),
-    "call_day": ("07:00", "19:00"),
-    "call_night": ("19:00", "07:00"),
-    "surgical_am": ("07:00", "12:00"),
-    "surgical_hosp_pm": ("13:00", "17:00"),
-}
 
 def _resolve_day_off_set(day_off_dates) -> set:
     if isinstance(day_off_dates, dict):

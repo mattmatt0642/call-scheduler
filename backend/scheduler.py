@@ -52,11 +52,11 @@ def _get_day_off_entries(day_off_dates, doctor_id):
     return entries
 
 
-def _get_day_off_entries(day_off_dates, doctor_id):
+def _is_blocked_by_timeoff(entry, slot_type):
     period = entry.get("period", "all_day")
     slot_period = SHIFT_PERIODS.get(slot_type, "all_day")
     if period == "all_day":
-        return slot_period == "all_day"
+        return True
     if slot_period == "all_day":
         return True
     if period == "morning" and slot_period == "morning":
@@ -367,7 +367,7 @@ def _compute_adjusted_quota(doc, week_num, days, day_off_dates):
     n_weekdays = max(len(week_days), 1)
     if n_weekdays < 5:
         reduction += (5 - n_weekdays)
-    adj = doc.required_sessions_per_week - int(reduction * doc.required_sessions_per_week / 5)
+    adj = doc.required_sessions_per_week - round(reduction * doc.required_sessions_per_week / 5)
     return max(0, adj)
 
 
@@ -562,6 +562,10 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                                           load, doc_map, hospital_id, doc_day_off_entries)
                         or not _is_available(doc.id, night_slot, assignments, slot_map,
                                              load, doc_map, hospital_id, doc_day_off_entries)):
+                        continue
+                    if len([a for a in assignments if a.slot_id == day_slot.slot_id]) >= day_slot.max_doctors:
+                        continue
+                    if len([a for a in assignments if a.slot_id == night_slot.slot_id]) >= night_slot.max_doctors:
                         continue
                     _do_assign(day_slot, doc)
                     _do_assign(night_slot, doc)
