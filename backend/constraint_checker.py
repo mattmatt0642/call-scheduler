@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Set
 from datetime import date as dt_class, timedelta
 from models import (DoctorProfile, Office, ShiftSlot, Assignment, ScheduleInput,
- abs_times_overlap, get_call_balance_group, get_days_in_month, get_nth_tuesdays, prev_date)
+ abs_times_overlap, get_call_balance_group, get_days_in_month, get_nth_tuesdays, prev_date, SHIFT_TIMES, SHIFT_PERIODS)
 
 CALL_SHIFT_TYPES = {"call_day", "call_night", "call_weekend", "call_weekend_sun"}
 CLEARING_SHIFT_TYPES = {"office_am", "office_pm", "office_late", "surgical_am", "surgical_hosp_pm"}
@@ -288,15 +288,21 @@ def check_h4_call_double(
                 ))
 
         if doc.call_shift_preference == "single":
-            violations.append(ConstraintViolation(
-                constraint_id = "H4",
-                constraint_name = "Call double",
-                severity = "hard",
-                description = f"Dr. {doc.name} has call_day + call_night on {date_str} but their call_shift_preference is 'single'.",
-                affected_doctors = [doc.id],
-                affected_dates = [date_str],
-                suggestion = "Change the doctor's call_shift_preference to 'double' or 'no_preference', or reassign one of the call slots."
-            ))
+            for date_str in day_by_date:
+                if date_str not in night_by_date:
+                    continue
+                d = dt_class.fromisoformat(date_str)
+                dow = d.weekday()
+                if dow < 5:
+                    violations.append(ConstraintViolation(
+                        constraint_id = "H4",
+                        constraint_name = "Call double",
+                        severity = "hard",
+                        description = f"Dr. {doc.name} has call_day + call_night on {date_str} but their call_shift_preference is 'single'.",
+                        affected_doctors = [doc.id],
+                        affected_dates = [date_str],
+                        suggestion = "Change the doctor's call_shift_preference to 'double' or 'no_preference', or reassign one of the call slots."
+                    ))
 
     return violations
 
@@ -592,37 +598,6 @@ def check_h10_days_off(
     """
     violations = []
     doc_map = {d.id: d for d in doctors}
-
-    SHIFT_PERIODS = {
-        "office_am": "morning",
-        "office_pm": "afternoon",
-        "office_late": "afternoon",
-        "call_day": "all_day",
-        "call_night": "all_day",
-        "surgical_am": "morning",
-        "surgical_hosp_pm": "afternoon",
-    }
-    SHIFT_TIMES = {
-        "office_am": ("08:00", "12:00"),
-        "office_pm": ("13:00", "17:00"),
-        "office_late": ("13:30", "18:30"),
-        "call_day": ("07:00", "19:00"),
-        "call_night": ("19:00", "07:00"),
-        "surgical_am": ("07:00", "12:00"),
-        "surgical_hosp_pm": ("13:00", "17:00"),
-    }
-
-    def _times_overlap(s1, e1, s2, e2):
-        def to_min(t):
-            h, m = t.split(":")
-            return int(h) * 60 + int(m)
-        a1, b1 = to_min(s1), to_min(e1)
-        a2, b2 = to_min(s2), to_min(e2)
-        if b1 <= a1:
-            b1 += 24 * 60
-        if b2 <= a2:
-            b2 += 24 * 60
-        return a1 < b2 and a2 < b1
 
     def _is_blocked_by_entry(entry, slot_type):
         period = entry.get("period", "all_day")
@@ -956,27 +931,6 @@ def check_s2_office_ranking(
     if not global_office_ranking:
         return violations
 
-    SHIFT_TIMES_LOCAL = {
-        "office_am": ("08:00", "12:00"),
-        "office_pm": ("13:00", "17:00"),
-        "office_late": ("13:30", "18:30"),
-        "call_day": ("07:00", "19:00"),
-        "call_night": ("19:00", "07:00"),
-        "surgical_am": ("07:00", "12:00"),
-        "surgical_hosp_pm": ("13:00", "17:00"),
-    }
-
-    def _to_min(t):
-        h, m = t.split(":")
-        return int(h) * 60 + int(m)
-
-    def _times_overlap_local(s1, e1, s2, e2):
-        a1, b1 = _to_min(s1), _to_min(e1)
-        a2, b2 = _to_min(s2), _to_min(e2)
-        if a1 > a2:
-            a1, b1, a2, b2 = a2, b2, a1, b1
-        return b1 > a2
-
     hospital_id = None
     if offices:
         for o in offices:
@@ -1039,21 +993,16 @@ def check_s2_office_ranking(
                     if dow in doc.standing_days_off:
                         continue
 
-                    bt = SHIFT_TIMES_LOCAL.get(better_slot.shift_type)
-                    if bt:
-                        overlap = False
-                        for oa in doc_assignments:
-                            other = slot_map.get(oa.slot_id)
-                            if not other or other.date != better_slot.date:
-                                continue
-                            ot = SHIFT_TIMES_LOCAL.get(other.shift_type)
-                            if not ot:
-                                continue
-                            if _times_overlap_local(bt[0], bt[1], ot[0], ot[1]):
-                                overlap = True
-                                break
-                        if overlap:
+                    overlap = False
+                    for oa in doc_assignments:
+                        other = slot_map.get(oa.slot_id)
+                        if not other or other.date != better_slot.date:
                             continue
+                        if abs_times_overlap(better_slot, other):
+                            overlap = True
+                            break
+                    if overlap:
+                        continue
 
                     if hospital_id and better_office != hospital_id:
                         doc_sorted = sorted(
@@ -1112,27 +1061,6 @@ def check_s3_late_shift_balance(
                 hospital_id = o.id
                 break
 
-    SHIFT_TIMES_LOCAL = {
-        "office_am": ("08:00", "12:00"),
-        "office_pm": ("13:00", "17:00"),
-        "office_late": ("13:30", "18:30"),
-        "call_day": ("07:00", "19:00"),
-        "call_night": ("19:00", "07:00"),
-        "surgical_am": ("07:00", "12:00"),
-        "surgical_hosp_pm": ("13:00", "17:00"),
-    }
-
-    def _to_min(t):
-        h, m = t.split(":")
-        return int(h) * 60 + int(m)
-
-    def _times_overlap_local(s1, e1, s2, e2):
-        a1, b1 = _to_min(s1), _to_min(e1)
-        a2, b2 = _to_min(s2), _to_min(e2)
-        if a1 > a2:
-            a1, b1, a2, b2 = a2, b2, a1, b1
-        return b1 > a2
-
     doc_assignments = {}
     for a in assignments:
         doc_assignments.setdefault(a.doctor_id, []).append(a)
@@ -1180,7 +1108,6 @@ def check_s3_late_shift_balance(
             if late_count == 0:
                 feasible = False
                 for ls in late_slots_in_week:
-                    ls_start, ls_end = SHIFT_TIMES_LOCAL.get("office_late", ("13:30", "18:30"))
                     blocked = False
 
                     dow = dt_class.fromisoformat(ls.date).weekday()
@@ -1196,10 +1123,7 @@ def check_s3_late_shift_balance(
                             continue
                         if other.date != ls.date:
                             continue
-                        ot = SHIFT_TIMES_LOCAL.get(other.shift_type)
-                        if not ot:
-                            continue
-                        if _times_overlap_local(ls_start, ls_end, ot[0], ot[1]):
+                        if abs_times_overlap(ls, other):
                             blocked = True
                             break
                     if blocked:
