@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0f0f15" />
+<title>Offline — Call Scheduler</title>
+<style>
+  :root {
+    --bg-primary: #0f0f15;
+    --bg-secondary: #1c1c28;
+    --text-primary: #e4e4eb;
+    --text-muted: #9090a4;
+    --accent-blue: #4f8ff7;
+    --font-ui: "Inter", "Segoe UI", system-ui, sans-serif;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-ui);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 1.5rem;
+  }
+  .offline-box {
+    text-align: center;
+    max-width: 360px;
+  }
+  .offline-icon {
+    width: 72px;
+    height: 72px;
+    background: rgba(79, 143, 247, 0.15);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1.5rem;
+    font-size: 2rem;
+  }
+  h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.6rem;
+  }
+  p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin-bottom: 1.5rem;
+  }
+  .btn {
+    display: inline-block;
+    background: var(--accent-blue);
+    color: #fff;
+    border: none;
+    padding: 0.65rem 1.4rem;
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    font-family: var(--font-ui);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 150ms;
+  }
+  .btn:hover { background: #3a75db; }
+  .status-area {
+    margin-top: 1.5rem;
+    padding: 0.8rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+  #connection-status { color: var(--accent-blue); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="offline-box">
+  <div class="offline-icon">📡</div>
+  <h1>You're Offline</h1>
+  <p>The server can't be reached right now. Your schedule data is safe in this browser — it will sync automatically when you're back online.</p>
+  <button class="btn" onclick="window.location.reload()">Try Again</button>
+  <div class="status-area">
+    Connection: <span id="connection-status">Checking...</span>
+  </div>
+</div>
+<script>
+  function updateStatus() {
+    const el = document.getElementById('connection-status');
+    if (navigator.onLine) {
+      el.textContent = 'Online — reloading...';
+      el.style.color = '#34d399';
+      setTimeout(() => window.location.reload(), 800);
+    } else {
+      el.textContent = 'Still offline';
+      el.style.color = '#f87171';
+    }
+  }
+  window.addEventListener('online', updateStatus);
+  window.addEventListener('offline', () => {
+    document.getElementById('connection-status').textContent = 'Offline';
+    document.getElementById('connection-status').style.color = '#f87171';
+  });
+  if (!navigator.onLine) {
+    document.getElementById('connection-status').textContent = 'Offline';
+    document.getElementById('connection-status').style.color = '#f87171';
+  } else {
+    updateStatus();
+  }
+</script>
+</body>
+</html>
