@@ -65,6 +65,7 @@ def validate_schedule(
     violations += check_s5_call_shift_preference(inp.doctors, known_assignments, slot_map)
     violations += check_s6_day_night_preference(inp.doctors, known_assignments, slot_map)
     violations += check_s7_office_variety(inp.doctors, known_assignments, slot_map, inp.offices)
+    violations += check_s8_weekend_pairing(inp.doctors, known_assignments, slot_map)
     return violations
 
 def check_h1_capacity(
@@ -195,10 +196,10 @@ def check_h3_call_coverage(
                         constraint_id = "H3",
                         constraint_name = "call coverage",
                         severity = "hard",
-                        description = f"No doctor assigned to call_weekend_sun on {slot.date}. (balance group: weekend_block) (preferences have no influence on this balance group)",
+                        description = f"No doctor assigned to call_weekend_sun on {slot.date} (Saturday also unassigned). Weekend block not covered.",
                         affected_doctors = [],
                         affected_dates = [slot.date],
-                        suggestion = "Not enough doctors available for all call slots."
+                        suggestion = "Not enough doctors available for all call slots. Weekend block requires both Sat and Sun."
                     ))
             elif count > 1:
                 violations.append(ConstraintViolation(
@@ -295,7 +296,7 @@ def check_h4_call_double(
                 dow = d.weekday()
                 if dow < 5:
                     violations.append(ConstraintViolation(
-                    constraint_id = "H4b",
+                    constraint_id = "H4",
                         constraint_name = "Call double",
                         severity = "hard",
                         description = f"Dr. {doc.name} has call_day + call_night on {date_str} but their call_shift_preference is 'single'.",
@@ -339,7 +340,7 @@ def check_h4b_max_call_limits(
             actual = group_counts.get(group, 0)
             if actual > limit:
                 violations.append(ConstraintViolation(
-                    constraint_id = "H4",
+                    constraint_id = "H4b",
                     constraint_name = "Max call limit",
                     severity = "hard",
                     description = f"Dr. {doc.name} has {actual} {group} calls but max is {limit}.",
@@ -678,6 +679,9 @@ def check_h10_days_off(
 
         dow = dt_class.fromisoformat(slot.date).weekday()
         if dow in doc.standing_days_off:
+            # Locked assignments override standing days off
+            if a.is_locked:
+                continue
             violations.append(ConstraintViolation(
                 constraint_id = "H10",
                 constraint_name = "Time off",
@@ -1404,6 +1408,72 @@ def check_s7_office_variety(
             ))
 
     return violations
+
+
+def check_s8_weekend_pairing(
+    doctors: List[DoctorProfile],
+    assignments: List[Assignment],
+    slot_map: Dict[str, ShiftSlot]
+) -> List[ConstraintViolation]:
+    """
+    S8: Soft preference that weekend call blocks should be paired (same doctor
+    on Saturday call_weekend and Sunday call_weekend_sun). Only flagged for
+    doctors who have weekend_pairing_preference=True.
+    """
+    violations = []
+    doc_map = {d.id: d for d in doctors}
+
+    # Build {date_str -> doctor_id} for call_weekend and call_weekend_sun
+    weekend_sat = {}
+    weekend_sun = {}
+    for a in assignments:
+        slot = slot_map.get(a.slot_id)
+        if not slot:
+            continue
+        if slot.shift_type == "call_weekend":
+            weekend_sat[slot.date] = a.doctor_id
+        elif slot.shift_type == "call_weekend_sun":
+            weekend_sun[slot.date] = a.doctor_id
+
+    for sun_date, sun_doc_id in weekend_sun.items():
+        sat_date = prev_date(sun_date)
+        if sat_date not in weekend_sat:
+            continue
+        sat_doc_id = weekend_sat[sat_date]
+        
+        # If same doctor on both days, no violation
+        if sat_doc_id == sun_doc_id:
+            continue
+        
+        sat_doc = doc_map.get(sat_doc_id)
+        sun_doc = doc_map.get(sun_doc_id)
+        
+        # Flag if the Saturday doctor prefers pairing
+        if sat_doc and sat_doc.weekend_pairing_preference:
+            violations.append(ConstraintViolation(
+                constraint_id="S8",
+                constraint_name="Weekend pairing",
+                severity="soft",
+                description=f"Weekend block on {sat_date}/{sun_date} has Dr. {sat_doc.name} on Saturday and Dr. {sun_doc.name if sun_doc else 'unknown'} on Sunday. Dr. {sat_doc.name} prefers paired weekend blocks.",
+                affected_doctors=[sat_doc_id],
+                affected_dates=[sat_date, sun_date],
+                suggestion="Assign the same doctor to both Saturday and Sunday of the weekend block, or set weekend_pairing_preference=False."
+            ))
+        
+        # Flag if the Sunday doctor prefers pairing
+        if sun_doc and sun_doc.weekend_pairing_preference:
+            violations.append(ConstraintViolation(
+                constraint_id="S8",
+                constraint_name="Weekend pairing",
+                severity="soft",
+                description=f"Weekend block on {sat_date}/{sun_date} has Dr. {sat_doc.name if sat_doc else 'unknown'} on Saturday and Dr. {sun_doc.name} on Sunday. Dr. {sun_doc.name} prefers paired weekend blocks.",
+                affected_doctors=[sun_doc_id],
+                affected_dates=[sat_date, sun_date],
+                suggestion="Assign the same doctor to both Saturday and Sunday of the weekend block, or set weekend_pairing_preference=False."
+            ))
+
+    return violations
+
 
 def suggest_relaxations(violations: List[ConstraintViolation]) -> List[str]:
     """

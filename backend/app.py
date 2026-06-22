@@ -115,6 +115,7 @@ def _parse_doctor(d: dict) -> DoctorProfile:
         hospital_call_eligible=d.get("hospitalCallEligible", d.get("hospital_call_eligible", True)),
         surgical_assist_eligible=d.get("surgicalAssistEligible", d.get("surgical_assist_eligible", True)),
         weekend_call_off=d.get("weekendCallOff", d.get("weekend_call_off", False)),
+        weekend_pairing_preference=d.get("weekendPairingPreference", d.get("weekend_pairing_preference", True)),
         max_weekday_day_calls=d.get("maxWeekdayDayCalls", d.get("max_weekday_day_calls", 5)),
         max_weekday_night_calls=d.get("maxWeekdayNightCalls", d.get("max_weekday_night_calls", 5)),
         max_friday_night_calls=d.get("maxFridayNightCalls", d.get("max_friday_night_calls", 2)),

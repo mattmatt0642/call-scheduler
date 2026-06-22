@@ -50,6 +50,7 @@ class DoctorProfile:
     hospital_call_eligible: bool = True
     surgical_assist_eligible: bool = True
     weekend_call_off: bool = False  # excluded from weekend call blocks
+    weekend_pairing_preference: bool = True  # prefer same doctor for Sat/Sun call_weekend block
     max_weekday_day_calls: int = 5
     max_weekday_night_calls: int = 5
     max_friday_night_calls: int = 2
