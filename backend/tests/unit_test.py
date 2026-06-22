@@ -464,5 +464,414 @@ class TestConstraintCheckerH10(unittest.TestCase):
                 "Expected H10 violation for d0 assigned on their blackout date")
 
 
+class TestUpdateLoadSurgical(unittest.TestCase):
+    def setUp(self):
+        self.doctors = _make_doctors(1)
+        self.offices = _make_offices()
+        self.hospital_id = "hosp"
+        self.load = _init_load(self.doctors, self.offices)
+
+    def test_surgical_am_increments_am_sessions(self):
+        slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_surgical_am", date="2026-01-05",
+            office_id="hosp", shift_type="surgical_am",
+            start_time="07:00", end_time="12:00", max_doctors=1
+        )
+        _update_load(self.load, "d0", slot, self.hospital_id)
+        self.assertEqual(self.load["d0"]["am_sessions"], 1)
+        self.assertEqual(self.load["d0"]["sessions"], 1)
+
+    def test_surgical_hosp_pm_increments_pm_sessions(self):
+        slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_surgical_hosp_pm", date="2026-01-05",
+            office_id="hosp", shift_type="surgical_hosp_pm",
+            start_time="13:00", end_time="17:00", max_doctors=1
+        )
+        _update_load(self.load, "d0", slot, self.hospital_id)
+        self.assertEqual(self.load["d0"]["pm_sessions"], 1)
+        self.assertEqual(self.load["d0"]["sessions"], 1)
+
+    def test_surgical_hosp_pm_clears_post_call(self):
+        call_slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_call_day", date="2026-01-05",
+            office_id="hosp", shift_type="call_day",
+            start_time="07:00", end_time="19:00", max_doctors=1
+        )
+        _update_load(self.load, "d0", call_slot, self.hospital_id)
+        self.assertTrue(self.load["d0"]["post_call_restricted"])
+        pm_slot = ShiftSlot(
+            slot_id="2026-01-06_hosp_surgical_hosp_pm", date="2026-01-06",
+            office_id="hosp", shift_type="surgical_hosp_pm",
+            start_time="13:00", end_time="17:00", max_doctors=1
+        )
+        _update_load(self.load, "d0", pm_slot, self.hospital_id)
+        self.assertFalse(self.load["d0"]["post_call_restricted"])
+
+    def test_call_weekend_sun_sets_post_call(self):
+        slot = ShiftSlot(
+            slot_id="2026-01-03_hosp_call_weekend_sun", date="2026-01-03",
+            office_id="hosp", shift_type="call_weekend_sun",
+            start_time="00:00", end_time="23:59", max_doctors=1
+        )
+        _update_load(self.load, "d0", slot, self.hospital_id)
+        self.assertTrue(self.load["d0"]["post_call_restricted"])
+        self.assertEqual(self.load["d0"]["weekend_blocks"], 0)
+
+    def test_office_late_increments_late_sessions(self):
+        slot = ShiftSlot(
+            slot_id="2026-01-05_north_office_late", date="2026-01-05",
+            office_id="north", shift_type="office_late",
+            start_time="13:30", end_time="18:30", max_doctors=2
+        )
+        _update_load(self.load, "d0", slot, self.hospital_id)
+        self.assertEqual(self.load["d0"]["late_sessions"], 1)
+        self.assertEqual(self.load["d0"]["sessions"], 1)
+
+
+class TestIsAvailableEdgeCases(unittest.TestCase):
+    def setUp(self):
+        self.doctors = _make_doctors(1)
+        self.offices = _make_offices()
+        self.hospital_id = "hosp"
+        self.slot_map = {}
+        self.load = _init_load(self.doctors, self.offices)
+        self.doc_map = {d.id: d for d in self.doctors}
+
+    def test_available_with_empty_assignments(self):
+        slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_office_am", date="2026-01-05",
+            office_id="hosp", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        self.assertTrue(_is_available(
+            "d0", slot, [], {slot.slot_id: slot}, self.load,
+            self.doc_map, self.hospital_id, []))
+
+    def test_blocked_by_call_shift_preference_single(self):
+        """Single-preference doctors should not get call_day+call_night on same date.
+        Note: _is_available doesn't check call_shift_preference — that's done in _find_eligible.
+        So we test via _find_eligible indirectly by checking the greedy scheduler output."""
+        doctors = _make_doctors(3)
+        doctors[0].call_shift_preference = "single"
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[], locked_assignments=[],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        result = schedule_greedy(inp)
+        slot_map = {s.slot_id: s for s in result.slots}
+        for doc_id in ["d0"]:
+            doc_assigns = [slot_map[a.slot_id] for a in result.assignments if a.doctor_id == doc_id]
+            day_dates = set()
+            night_dates = set()
+            for s in doc_assigns:
+                if s.shift_type == "call_day":
+                    day_dates.add(s.date)
+                elif s.shift_type == "call_night":
+                    night_dates.add(s.date)
+            doubles = day_dates & night_dates
+            self.assertEqual(len(doubles), 0,
+                f"Single-preference {doc_id} should not have call_day+call_night on same date, found doubles: {doubles}")
+
+    def test_available_friday_double_preference(self):
+        doc = DoctorProfile(
+            id="d0", name="Dr", allowed_offices=None,
+            office_preferences=[], required_sessions_per_week=5,
+            hospital_call_eligible=True, surgical_assist_eligible=True,
+            max_weekday_day_calls=5, max_weekday_night_calls=5,
+            max_friday_night_calls=2, max_weekend_blocks=2,
+            preferred_call_days=[], post_call_preference="no_preference",
+            call_shift_preference="double", day_night_preference="balanced",
+            am_pm_preference="balanced", standing_days_off=[]
+        )
+        doc_map = {doc.id: doc}
+        day_slot = ShiftSlot(
+            slot_id="2026-01-02_hosp_call_day", date="2026-01-02",
+            office_id="hosp", shift_type="call_day",
+            start_time="07:00", end_time="19:00", max_doctors=1
+        )
+        night_slot = ShiftSlot(
+            slot_id="2026-01-02_hosp_call_night", date="2026-01-02",
+            office_id="hosp", shift_type="call_night",
+            start_time="19:00", end_time="07:00", max_doctors=1
+        )
+        assignments = [Assignment(doctor_id="d0", slot_id=day_slot.slot_id)]
+        slot_map = {day_slot.slot_id: day_slot, night_slot.slot_id: night_slot}
+        load = _init_load(self.doctors, self.offices)
+        _update_load(load, "d0", day_slot, self.hospital_id)
+        self.assertTrue(_is_available(
+            "d0", night_slot, assignments, slot_map, load,
+            doc_map, self.hospital_id, []))
+
+    def test_weekend_call_off_blocks_weekend_slots(self):
+        doc = DoctorProfile(
+            id="d0", name="Dr", allowed_offices=None,
+            office_preferences=[], required_sessions_per_week=5,
+            hospital_call_eligible=True, surgical_assist_eligible=True,
+            max_weekday_day_calls=5, max_weekday_night_calls=5,
+            max_friday_night_calls=2, max_weekend_blocks=2,
+            preferred_call_days=[], post_call_preference="no_preference",
+            call_shift_preference="no_preference", day_night_preference="balanced",
+            am_pm_preference="balanced", standing_days_off=[],
+            weekend_call_off=True
+        )
+        doc_map = {doc.id: doc}
+        sat_slot = ShiftSlot(
+            slot_id="2026-01-03_hosp_call_weekend", date="2026-01-03",
+            office_id="hosp", shift_type="call_weekend",
+            start_time="00:00", end_time="23:59", max_doctors=1
+        )
+        self.assertFalse(_is_available(
+            "d0", sat_slot, [], {sat_slot.slot_id: sat_slot}, self.load,
+            doc_map, self.hospital_id, []))
+
+    def test_post_call_cleared_after_hospital_office(self):
+        call_slot = ShiftSlot(
+            slot_id="2026-01-05_hosp_call_night", date="2026-01-05",
+            office_id="hosp", shift_type="call_night",
+            start_time="19:00", end_time="07:00", max_doctors=1
+        )
+        am_slot = ShiftSlot(
+            slot_id="2026-01-06_hosp_office_am", date="2026-01-06",
+            office_id="hosp", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        north_slot = ShiftSlot(
+            slot_id="2026-01-06_north_office_am", date="2026-01-06",
+            office_id="north", shift_type="office_am",
+            start_time="08:00", end_time="12:00", max_doctors=2
+        )
+        assignments = [Assignment(doctor_id="d0", slot_id=call_slot.slot_id)]
+        slot_map = {call_slot.slot_id: call_slot, am_slot.slot_id: am_slot,
+                     north_slot.slot_id: north_slot}
+        load = _init_load(self.doctors, self.offices)
+        _update_load(load, "d0", call_slot, self.hospital_id)
+        self.assertTrue(_is_available(
+            "d0", am_slot, assignments, slot_map, load,
+            self.doc_map, self.hospital_id, []))
+        _update_load(load, "d0", am_slot, self.hospital_id)
+        self.assertTrue(_is_available(
+            "d0", north_slot, assignments, slot_map, load,
+            self.doc_map, self.hospital_id, []))
+
+
+class TestConstraintCheckerEdgeCases(unittest.TestCase):
+    def test_h11_locked_preserved_missing(self):
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[Assignment(doctor_id="d0", slot_id="2026-09-01_hosp_call_day", is_locked=True)],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        violations = validate_schedule(inp, slots, [])
+        h11 = [v for v in violations if v.constraint_id == "H11"]
+        self.assertGreater(len(h11), 0,
+            "Expected H11 violation for missing locked assignment")
+
+    def test_h11_locked_preserved_ok(self):
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[Assignment(doctor_id="d0", slot_id="2026-09-01_hosp_call_day", is_locked=True)],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        assignments = [Assignment(doctor_id="d0", slot_id="2026-09-01_hosp_call_day", is_locked=True)]
+        violations = validate_schedule(inp, slots, assignments)
+        h11 = [v for v in violations if v.constraint_id == "H11"]
+        self.assertEqual(len(h11), 0,
+            "Expected no H11 violation when locked assignment is present")
+
+    def test_h13_late_shift_distinctness_ok(self):
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[], historical_balance={},
+            solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        violations = validate_schedule(inp, slots, [])
+        h13 = [v for v in violations if v.constraint_id == "H13"]
+        self.assertEqual(len(h13), 0,
+            "Expected no H13 violations with normal slot generation")
+
+    def test_h4_weekend_block_not_double_violation(self):
+        """Weekend blocks (Sat+Sun same doctor) are intentional, not H4 violations."""
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[], historical_balance={},
+            solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        slot_map = {s.slot_id: s for s in slots}
+        sat_id = "2026-09-05_hosp_call_weekend"
+        sun_id = "2026-09-06_hosp_call_weekend_sun"
+        if sat_id in slot_map and sun_id in slot_map:
+            assignments = [
+                Assignment(doctor_id="d0", slot_id=sat_id),
+                Assignment(doctor_id="d0", slot_id=sun_id),
+            ]
+            violations = validate_schedule(inp, slots, assignments)
+            h4 = [v for v in violations if v.constraint_id == "H4"]
+            self.assertEqual(len(h4), 0,
+                "Weekend blocks (Sat+Sun) should NOT trigger H4 violation")
+
+    def test_suggest_relaxations_returns_list(self):
+        from constraint_checker import suggest_relaxations
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[], historical_balance={},
+            solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        violations = validate_schedule(inp, slots, [])
+        suggestions = suggest_relaxations(violations)
+        self.assertIsInstance(suggestions, list)
+
+    def test_h8_post_call_location_violation(self):
+        doctors = _make_doctors(2)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[], historical_balance={},
+            solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        slot_map = {s.slot_id: s for s in slots}
+        call_id = "2026-09-01_hosp_call_night"
+        north_id = "2026-09-02_north_office_am"
+        if call_id in slot_map and north_id in slot_map:
+            assignments = [
+                Assignment(doctor_id="d0", slot_id=call_id),
+                Assignment(doctor_id="d0", slot_id=north_id),
+            ]
+            violations = validate_schedule(inp, slots, assignments)
+            h8 = [v for v in violations if v.constraint_id == "H8"]
+            self.assertGreater(len(h8), 0,
+                "Expected H8 violation for non-hospital office after call")
+
+    def test_h7_surgical_pairing_violation(self):
+        doctors = _make_doctors(2, surgical=True)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[],
+            locked_assignments=[], historical_balance={},
+            solver_time_limit_seconds=30
+        )
+        slots = generate_slots(2026, 8, offices, [], [])
+        slot_map = {s.slot_id: s for s in slots}
+        surg_am_id = "2026-09-01_hosp_surgical_am"
+        if surg_am_id in slot_map:
+            assignments = [Assignment(doctor_id="d0", slot_id=surg_am_id)]
+            violations = validate_schedule(inp, slots, assignments)
+            h7 = [v for v in violations if v.constraint_id == "H7"]
+            self.assertGreater(len(h7), 0,
+                "Expected H7 violation for unpaired surgical AM")
+
+
+class TestGreedySchedulerEdgeCases(unittest.TestCase):
+    def test_single_call_eligible_doctor(self):
+        doctors = _make_doctors(3, call=False)
+        doctors[0].hospital_call_eligible = True
+        doctors[0].max_weekday_day_calls = 30
+        doctors[0].max_weekday_night_calls = 30
+        doctors[0].max_friday_night_calls = 10
+        doctors[0].max_weekend_blocks = 10
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[], locked_assignments=[],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        result = schedule_greedy(inp)
+        self.assertGreater(len(result.assignments), 0)
+
+    def test_doctor_with_all_preferences(self):
+        doctors = [DoctorProfile(
+            id="d0", name="Dr", allowed_offices=None,
+            office_preferences=["hosp", "north"], required_sessions_per_week=5,
+            hospital_call_eligible=True, surgical_assist_eligible=True,
+            max_weekday_day_calls=5, max_weekday_night_calls=5,
+            max_friday_night_calls=2, max_weekend_blocks=2,
+            preferred_call_days=[0, 2], post_call_preference="work",
+            call_shift_preference="double", day_night_preference="day",
+            am_pm_preference="am", standing_days_off=[]
+        )]
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates=[], custom_restrictions=[], locked_assignments=[],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        result = schedule_greedy(inp)
+        self.assertGreater(len(result.assignments), 0)
+
+    def test_large_day_off_reduces_quota(self):
+        doctors = _make_doctors(3)
+        offices = _make_offices()
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north"],
+            day_off_dates={"d0": ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"]},
+            custom_restrictions=[], locked_assignments=[],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        result = schedule_greedy(inp)
+        slot_map = {s.slot_id: s for s in result.slots}
+        for a in result.assignments:
+            if a.doctor_id == "d0":
+                s = slot_map[a.slot_id]
+                self.assertNotIn(s.date, ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"],
+                    f"d0 assigned on day off {s.date}")
+
+    def test_multiple_offices_filled(self):
+        doctors = _make_doctors(5)
+        offices = [
+            Office(id="hosp", name="Hospital", is_hospital=True,
+                   max_per_shift=2, restricted_tuesday_max=1),
+            Office(id="north", name="North", is_hospital=False,
+                   max_per_shift=3, restricted_tuesday_max=3),
+            Office(id="south", name="South", is_hospital=False,
+                   max_per_shift=2, restricted_tuesday_max=2),
+        ]
+        inp = ScheduleInput(
+            year=2026, month=8, doctors=doctors, offices=offices,
+            global_office_ranking=["hosp", "north", "south"],
+            day_off_dates=[], custom_restrictions=[], locked_assignments=[],
+            historical_balance={}, solver_time_limit_seconds=30
+        )
+        result = schedule_greedy(inp)
+        self.assertEqual(len(result.counts), 5)
+        for doc_id, counts in result.counts.items():
+            self.assertGreater(counts.total_sessions, 0,
+                f"{doc_id} should have at least 1 session")
+
+
 if __name__ == "__main__":
     unittest.main()
