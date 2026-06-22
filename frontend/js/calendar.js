@@ -34,8 +34,6 @@ function buildCalendarHTML(year, month, scheduleData) {
   const shiftRows = [
     { key: 'call_day', label: 'Call Day' },
     { key: 'call_night', label: 'Call Night' },
-    { key: 'call_weekend', label: 'Wknd Sat' },
-    { key: 'call_weekend_sun', label: 'Wknd Sun' },
     { key: 'surgical_am', label: 'Surg AM' },
     { key: 'surgical_hosp_pm', label: 'Surg PM' },
   ];
@@ -65,8 +63,11 @@ function buildCalendarHTML(year, month, scheduleData) {
 
       const chip = getChipClass(slot);
 
-      if (['call_day', 'call_night', 'call_weekend', 'call_weekend_sun'].includes(slot.shiftType)) {
+      if (slot.shiftType === 'call_day' || slot.shiftType === 'call_night') {
         dayData[dayNum].slots[slot.shiftType] = { doc: docName, chip };
+      }
+      else if (slot.shiftType === 'call_weekend' || slot.shiftType === 'call_weekend_sun') {
+        dayData[dayNum].slots['call_day'] = { doc: docName, chip };
       }
       else if (slot.shiftType === 'surgical_am') {
         dayData[dayNum].slots['surgical_am'] = { doc: docName, chip };
@@ -213,7 +214,7 @@ function buildCalendarHTML(year, month, scheduleData) {
 
 function getChipClass(slot) {
 	const t = slot.shiftType;
-	if (t === 'call_day') return 'chip-call-day';
+	if (t === 'call_day' || t === 'call_weekend' || t === 'call_weekend_sun') return 'chip-call-day';
 	if (t === 'call_night') {
 		return 'chip-call-night';
 	}
