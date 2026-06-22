@@ -12,3 +12,4 @@ skills-lock.json
 .pytest_cache/
 node_modules/
 .env
+test-results/
