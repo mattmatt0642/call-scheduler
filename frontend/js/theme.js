@@ -34,6 +34,12 @@ const THEME_CONFIG = (function() {
     return result;
   }
 
+  function escHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text || '';
+    return d.innerHTML;
+  }
+
   function getTenantId() {
     const params = new URLSearchParams(window.location.search);
     const urlTenant = params.get('tenant');
@@ -45,62 +51,25 @@ const THEME_CONFIG = (function() {
     return 'default';
   }
 
-  function loadConfigFile(tenantId, callback) {
-    if (tenantId === 'default') {
-      try {
-        const stored = localStorage.getItem('theme_default');
-        if (stored) {
-          try { callback(JSON.parse(stored)); return; } catch(e) {}
-        }
-      } catch(e) {}
-    }
-    const xhr = new XMLHttpRequest();
-    xhr.overrideMimeType('application/json');
-    xhr.open('GET', 'theme-config.json', false);
-    xhr.onload = function() {
-      if (xhr.status === 200) {
-        try {
-          const parsed = JSON.parse(xhr.responseText);
-          try { localStorage.setItem('theme_default', xhr.responseText); } catch(e) {}
-          callback(parsed);
-          return;
-        } catch(e) {}
+  function applyColors(config) {
+    if (!config || !config.colors) return;
+    for (const [prop, value] of Object.entries(config.colors)) {
+      if (prop.startsWith('--')) {
+        document.documentElement.style.setProperty(prop, value);
       }
-      callback(null);
-    };
-    xhr.onerror = function() { callback(null); };
-    xhr.send();
+    }
   }
 
-  function applyConfig(config) {
+  function applyFavicon(config) {
     if (!config) return;
-
-    if (config.name) {
-      const h1 = document.querySelector('.app-header h1');
-      if (h1) {
-        if (config.logoUrl) {
-          h1.innerHTML = '<img src="' + config.logoUrl + '" alt="' + escHtml(config.name) + '" class="theme-logo" />';
-        } else {
-          const parts = config.name.split(' ');
-          if (parts.length > 1) {
-            h1.innerHTML = escHtml(parts[0]) + '<span>' + escHtml(parts.slice(1).join(' ')) + '</span>';
-          } else {
-            h1.textContent = config.name;
-          }
-        }
-      }
-      document.title = config.name;
-    }
-
     if (config.faviconUrl) {
-      const existing = document.querySelector('link[rel="icon"]');
-      if (existing) existing.href = config.faviconUrl;
-      else {
-        const link = document.createElement('link');
-        link.rel = 'icon';
-        link.href = config.faviconUrl;
-        document.head.appendChild(link);
+      let iconLink = document.querySelector('link[rel="icon"]');
+      if (!iconLink) {
+        iconLink = document.createElement('link');
+        iconLink.rel = 'icon';
+        document.head.appendChild(iconLink);
       }
+      iconLink.href = config.faviconUrl;
     } else if (config.faviconEmoji) {
       const encoded = encodeURIComponent(config.faviconEmoji);
       const svgDataUri = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">' + encoded + '</text></svg>';
@@ -111,16 +80,35 @@ const THEME_CONFIG = (function() {
         document.head.appendChild(iconLink);
       }
       iconLink.href = svgDataUri;
+    }
+    if (config.colors && config.colors['--bg-primary']) {
       const metaTheme = document.querySelector('meta[name="theme-color"]');
-      if (config.colors && config.colors['--bg-primary']) {
-        if (metaTheme) metaTheme.content = config.colors['--bg-primary'];
+      if (metaTheme) metaTheme.content = config.colors['--bg-primary'];
+    }
+  }
+
+  function applyDOM(config) {
+    if (!config) return;
+    if (config.name) {
+      document.title = config.name;
+      const h1 = document.querySelector('.app-header h1');
+      if (h1) {
+        if (config.logoUrl) {
+          h1.innerHTML = '<img src="' + escHtml(config.logoUrl) + '" alt="' + escHtml(config.name) + '" class="theme-logo" />';
+        } else {
+          const parts = config.name.split(' ');
+          if (parts.length > 1) {
+            h1.innerHTML = escHtml(parts[0]) + '<span>' + escHtml(parts.slice(1).join(' ')) + '</span>';
+          } else {
+            h1.textContent = config.name;
+          }
+        }
       }
     }
-
-    if (config.footer) {
-      const footer = document.querySelector('.app-footer');
+    if (config.footer !== null && config.footer !== undefined) {
+      const footer = document.getElementById('app-footer');
       if (footer) {
-        const statusSpan = footer.querySelector('#api-status');
+        const statusSpan = document.getElementById('api-status');
         footer.innerHTML = '';
         const txt = document.createElement('span');
         txt.textContent = config.footer;
@@ -131,32 +119,22 @@ const THEME_CONFIG = (function() {
         }
       }
     }
-
-    if (config.colors) {
-      for (const [prop, value] of Object.entries(config.colors)) {
-        if (prop.startsWith('--')) {
-          document.documentElement.style.setProperty(prop, value);
-        }
-      }
-    }
-  }
-
-  function escHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text || '';
-    return d.innerHTML;
   }
 
   const tenantId = getTenantId();
   let finalConfig = Object.assign({}, DEFAULT_CONFIG);
+
+  try { localStorage.setItem('theme_id', tenantId); } catch(e) {}
 
   try {
     const storedKey = 'theme_' + tenantId;
     const stored = localStorage.getItem(storedKey);
     if (stored) {
       try {
-        finalConfig = deepMerge(finalConfig, JSON.parse(stored));
-        applyConfig(finalConfig);
+        const parsed = JSON.parse(stored);
+        finalConfig = deepMerge(finalConfig, parsed);
+        applyColors(finalConfig);
+        applyFavicon(finalConfig);
       } catch(e) {}
     }
   } catch(e) {}
@@ -168,11 +146,14 @@ const THEME_CONFIG = (function() {
     try {
       const loaded = JSON.parse(xhr.responseText);
       finalConfig = deepMerge(finalConfig, loaded);
-      applyConfig(finalConfig);
+      applyColors(finalConfig);
+      applyFavicon(finalConfig);
     } catch(e) {}
   }
 
-  try { localStorage.setItem('theme_id', tenantId); } catch(e) {}
+  document.addEventListener('DOMContentLoaded', function() {
+    applyDOM(finalConfig);
+  });
 
   return finalConfig;
 })();
@@ -186,4 +167,40 @@ function applyThemeConfig(config) {
       }
     }
   }
+  if (config.name) document.title = config.name;
+  const h1 = document.querySelector('.app-header h1');
+  if (h1 && config.name) {
+    if (config.logoUrl) {
+      const d = document.createElement('div');
+      d.textContent = config.name;
+      h1.innerHTML = '<img src="' + escHtml(config.logoUrl) + '" alt="' + escHtml(d.innerHTML) + '" class="theme-logo" />';
+    } else {
+      const parts = config.name.split(' ');
+      if (parts.length > 1) {
+        h1.innerHTML = escHtml(parts[0]) + '<span>' + escHtml(parts.slice(1).join(' ')) + '</span>';
+      } else {
+        h1.textContent = config.name;
+      }
+    }
+  }
+  if (config.footer !== null && config.footer !== undefined) {
+    const footer = document.getElementById('app-footer');
+    if (footer) {
+      const statusSpan = document.getElementById('api-status');
+      footer.innerHTML = '';
+      const txt = document.createElement('span');
+      txt.textContent = config.footer;
+      footer.appendChild(txt);
+      if (statusSpan) {
+        footer.appendChild(document.createTextNode(' · '));
+        footer.appendChild(statusSpan);
+      }
+    }
+  }
+}
+
+function escHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text || '';
+  return d.innerHTML;
 }
