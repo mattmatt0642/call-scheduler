@@ -125,7 +125,6 @@ function showWizardStep(step) {
   try { renderWizardDoctors(); } catch(e) { console.error('[showWizardStep] renderWizardDoctors error:', e); }
   try { renderWizardOffices(); } catch(e) { console.error('[showWizardStep] renderWizardOffices error:', e); }
   try { updateWizardSummary(); } catch(e) { console.error('[showWizardStep] updateWizardSummary error:', e); }
-  if (step === 4) updateBlackoutDoctorSelect();
   if (step === 4) refreshBlackoutCalendar();
 }
 
@@ -283,6 +282,9 @@ return `<div class="entity-card fade-in-item">
         <label class="toggle-label"><span class="toggle-text">No Wknd Call</span>
         <div class="toggle-switch"><input type="checkbox" ${doc.weekendCallOff ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendCallOff', this.checked)"/><span class="toggle-slider"></span></div>
         </label>
+        <label class="toggle-label"><span class="toggle-text">Pair Weekends</span>
+        <div class="toggle-switch"><input type="checkbox" ${doc.weekendPairingPreference ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendPairingPreference', this.checked)"/><span class="toggle-slider"></span></div>
+        </label>
         </div>
   </div>
   <div class="actions">
@@ -329,13 +331,6 @@ function renderWizardOffices() {
   }
 }
 
-// ── Setup (backward compat for old tab IDs) ─────────────────────────────────
-
-function renderSetup() {
-	// old tab panes are hidden but kept for backward compat
-	updateDataStatus();
-}
-
 // ── Doctors ─────────────────────────────────────────────────────────────────
 
 function addDoctor() {
@@ -344,7 +339,6 @@ function addDoctor() {
   renderWizardDoctors();
   renderDoctorAccordion();
   updateWizardSummary();
-  updateBlackoutDoctorSelect();
   renderQuickSetupSummary();
 }
 
@@ -362,7 +356,6 @@ function quickAddDoctor() {
   renderWizardDoctors();
   renderDoctorAccordion();
   updateWizardSummary();
-  updateBlackoutDoctorSelect();
   renderQuickSetupSummary();
   if (input) { input.value = ''; input.focus(); }
   showToast(`Added ${name}`);
@@ -382,7 +375,6 @@ async function removeDoctor(id) {
   renderWizardDoctors();
   renderDoctorAccordion();
   updateWizardSummary();
-  updateBlackoutDoctorSelect();
   refreshBlackoutCalendar();
   renderQuickSetupSummary();
   _showUndoToast(`${name} removed`);
@@ -461,15 +453,6 @@ function openDoctorAccordion(docId) {
 }
 
 // ── Blackout calendars ─────────────────────────────────────────────────────
-
-function updateBlackoutDoctorSelect() {
-  const sel = document.getElementById('blackout-doctor-select');
-  if (sel) {
-    sel.innerHTML = STATE.doctors.map(d =>
-      `<option value="${d.id}">${escapeHtml(d.name)}</option>`
-    ).join('');
-  }
-}
 
 function getBlackoutYearMonth() {
   const yEl = document.getElementById('wiz-year');
@@ -809,7 +792,8 @@ function handleImportDoctors(file) {
 					requiredSessionsPerWeek: parseInt(row.requiredSessionsPerWeek || row.required_sessions_per_week || 5) || 5,
 					hospitalCallEligible: !(['false','0','no'].includes(String(row.hospitalCallEligible).toLowerCase())),
 		surgicalAssistEligible: !(['false','0','no'].includes(String(row.surgicalAssistEligible).toLowerCase())),
-		weekendCallOff: ['true','1','yes'].includes(String(row.weekendCallOff || row.weekend_call_off).toLowerCase()),
+        weekendCallOff: ['true','1','yes'].includes(String(row.weekendCallOff || row.weekend_call_off).toLowerCase()),
+        weekendPairingPreference: !(['false','0','no'].includes(String(row.weekendPairingPreference || row.weekend_pairing_preference).toLowerCase())),
 		maxWeekdayDayCalls: parseInt(row.maxWeekdayDayCalls || row.max_weekday_day_calls || 5) || 5,
 					maxWeekdayNightCalls: parseInt(row.maxWeekdayNightCalls || row.max_weekday_night_calls || 5) || 5,
 					maxFridayNightCalls: parseInt(row.maxFridayNightCalls || row.max_friday_night_calls || 2) || 2,
@@ -832,7 +816,6 @@ function handleImportDoctors(file) {
 			renderWizardDoctors();
 			renderDoctorAccordion();
 			updateWizardSummary();
-			updateBlackoutDoctorSelect();
 			updateBalanceTable();
 			alertMsg(`Imported ${imported.length} doctor(s)`);
 		} catch (err) { alertMsg('Import failed: ' + err.message); }
@@ -873,10 +856,10 @@ function handleImportOffices(file) {
 }
 
 function handleExportDoctors() {
-  const headers = ['name','id','hospitalCallEligible','surgicalAssistEligible','weekendCallOff','requiredSessionsPerWeek','maxWeekdayDayCalls','maxWeekdayNightCalls','maxFridayNightCalls','maxWeekendBlocks','preferredCallDays','standingDaysOff','allowedOffices'];
+  const headers = ['name','id','hospitalCallEligible','surgicalAssistEligible','weekendCallOff','weekendPairingPreference','requiredSessionsPerWeek','maxWeekdayDayCalls','maxWeekdayNightCalls','maxFridayNightCalls','maxWeekendBlocks','preferredCallDays','standingDaysOff','allowedOffices'];
   let csv = headers.map(h => `"${h}"`).join(',') + '\n';
   for (const doc of STATE.doctors) {
-    csv += [ `"${doc.name}"`, doc.id, doc.hospitalCallEligible, doc.surgicalAssistEligible, doc.weekendCallOff,
+    csv += [ `"${doc.name}"`, doc.id, doc.hospitalCallEligible, doc.surgicalAssistEligible, doc.weekendCallOff, doc.weekendPairingPreference,
       doc.requiredSessionsPerWeek, doc.maxWeekdayDayCalls, doc.maxWeekdayNightCalls,
 			doc.maxFridayNightCalls, doc.maxWeekendBlocks,
 			(doc.preferredCallDays||[]).join(';'), (doc.standingDaysOff||[]).join(';'), (doc.allowedOffices||[]).join(';')
@@ -1039,7 +1022,6 @@ function safeRender(label, fn, fallbackHTML) {
     fn();
   } catch (err) {
     console.error('[safeRender] ' + label + ' failed:', err);
-    if (typeof logError === 'function') logError('render_error', err.message, { label, stack: err.stack });
     if (fallbackHTML !== undefined) {
       const el = document.querySelector('[data-render-target="' + label + '"]') ||
                  document.getElementById('wiz-' + label) ||
@@ -1050,100 +1032,6 @@ function safeRender(label, fn, fallbackHTML) {
     }
     showToast('Something went wrong displaying ' + label + '. Try reloading.', 4000);
   }
-}
-
-function showStaleDataWarning() {
-  if (typeof isDataStale !== 'function') return;
-  if (!isDataStale(60 * 60 * 1000)) return;
-  const existing = document.getElementById('stale-data-banner');
-  if (existing) return;
-  const banner = document.createElement('div');
-  banner.id = 'stale-data-banner';
-  banner.className = 'conn-banner conn-banner-warn';
-  banner.setAttribute('role', 'alert');
-  banner.innerHTML = '<span class="conn-banner-icon">&#9200;</span><span class="conn-banner-msg">Viewing older data — reconnect to sync latest</span><button class="conn-banner-dismiss btn btn-sm btn-ghost" onclick="this.closest(\'#stale-data-banner\').remove()">&times;</button>';
-  const header = document.querySelector('.app-header');
-  if (header) header.insertAdjacentElement('afterend', banner);
-}
-
-function handleBackupState() {
-  const blob = new Blob([JSON.stringify(STATE, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'callsched-backup-' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  showToast('Backup downloaded');
-}
-
-function handleRestoreState(file) {
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      const parsed = JSON.parse(e.target.result);
-      if (!parsed.doctors && !parsed.schedules) {
-        alertMsg('Invalid backup file — missing doctors or schedules.');
-        return;
-      }
-      _saveUndoSnapshot();
-      _mergeDefaults(parsed);
-      STATE = parsed;
-      migrateBlackoutFormat();
-      saveState();
-      refreshUI();
-      showToast('Backup restored — changes saved');
-    } catch (err) {
-      alertMsg('Failed to restore backup: ' + err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-function showSnapshotsModal() {
-  const snaps = typeof getSnapshots === 'function' ? getSnapshots() : [];
-  if (!snaps.length) {
-    alertMsg('No backups yet. Backups are created automatically every 10 minutes when the app is open.');
-    return;
-  }
-  const rows = snaps.map((s, i) => {
-    const date = new Date(s.ts).toLocaleString();
-    return `<tr><td>${i + 1}</td><td>${date}</td><td>${s.doctorCount} docs</td><td>${s.scheduleMonths} months</td><td>${s.sizeKB}KB</td><td><button class="btn btn-sm btn-ghost" onclick="restoreSnapshotFromModal('${s.key}')">Restore</button></td></tr>`;
-  }).join('');
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal-box" style="max-width:520px;width:95vw;">
-    <div class="modal-body" style="padding:0;">
-      <h3 style="padding:1rem 1rem 0.5rem;font-size:1rem;">Backups</h3>
-      <p style="padding:0 1rem 0.75rem;color:var(--text-muted);font-size:0.8rem;">Restoring a backup replaces current data. This can be undone.</p>
-      <table class="sheet-table" style="width:100%;font-size:0.8rem;">
-        <thead><tr><th>#</th><th>Date</th><th>Doctors</th><th>Months</th><th>Size</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-    <div class="modal-actions"><button class="btn btn-ghost modal-ok">Close</button></div>
-  </div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelector('.modal-ok').addEventListener('click', () => overlay.remove());
-  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
-}
-
-function restoreSnapshotFromModal(key) {
-  if (typeof restoreSnapshot !== 'function') return;
-  try {
-    _saveUndoSnapshot();
-    restoreSnapshot(key);
-    refreshUI();
-    showToast('Backup restored');
-    document.querySelectorAll('.modal-overlay').forEach(el => el.remove());
-  } catch (err) {
-    alertMsg('Restore failed: ' + err.message);
-  }
-}
-
-function getSyncQueueStatus() {
-  if (typeof getSyncQueueSize !== 'function') return '';
-  const n = getSyncQueueSize();
-  if (n === 0) return '';
-  return ' · ' + n + ' pending sync';
 }
 
 function updateScheduleDisplaySafe(data) {
@@ -1158,7 +1046,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const wizYear = document.getElementById('wiz-year');
   if (wizYear && !wizYear.value) wizYear.value = new Date().getFullYear();
   showWizardStep(wizardStep);
-  updateBlackoutDoctorSelect();
   refreshBlackoutCalendar();
   updateBalanceTable();
   updateScheduleControls();
@@ -1186,9 +1073,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-  // Wizard step 4 blackout select
-  document.getElementById('blackout-doctor-select')?.addEventListener('change', refreshBlackoutCalendar);
-
 	// Wizard file imports
 	document.getElementById('import-doctors-file')?.addEventListener('change', function() {
 		if (this.files.length) { handleImportDoctors(this.files[0]); this.value = ''; }
@@ -1200,13 +1084,7 @@ document.addEventListener('DOMContentLoaded', () => {
 	// Balance export/import/backup
 	document.getElementById('btn-export-balance')?.addEventListener('click', handleExportBalance);
 	document.getElementById('import-balance-file')?.addEventListener('change', handleImportBalance);
-	document.getElementById('btn-backup-state')?.addEventListener('click', handleBackupState);
-	document.getElementById('import-backup-file')?.addEventListener('change', function() {
-		if (this.files.length) { handleRestoreState(this.files[0]); this.value = ''; }
-	});
-	document.getElementById('btn-view-snapshots')?.addEventListener('click', showSnapshotsModal);
 
-	// API health check
 	apiHealth()
 		.then(() => {
 			const el = document.getElementById('api-status');
@@ -1218,12 +1096,4 @@ document.addEventListener('DOMContentLoaded', () => {
 		});
 
 	updateDataStatus();
-	showStaleDataWarning();
-
-	const syncStatus = getSyncQueueStatus();
-	if (syncStatus) {
-		const dataEl = document.getElementById('data-status');
-		if (dataEl) dataEl.textContent += syncStatus;
-		showToast('Some changes are pending sync — will upload when connected', 4000);
-	}
 });
