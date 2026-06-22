@@ -1,0 +1,13 @@
+{
+  "name": "call-scheduler-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "install-deps": "npx playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
