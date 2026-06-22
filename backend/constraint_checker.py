@@ -295,7 +295,7 @@ def check_h4_call_double(
                 dow = d.weekday()
                 if dow < 5:
                     violations.append(ConstraintViolation(
-                        constraint_id = "H4",
+                    constraint_id = "H4b",
                         constraint_name = "Call double",
                         severity = "hard",
                         description = f"Dr. {doc.name} has call_day + call_night on {date_str} but their call_shift_preference is 'single'.",
@@ -447,6 +447,7 @@ def check_h6_no_overlap(
         for i, s1 in enumerate(doc_slots):
             for s2 in doc_slots[i + 1:]:
                 if abs_times_overlap(s1, s2):
+                    # call_day + surgical on same date is allowed (call doctor covers surgical)
                     same_date_surgical_call = (
                         s1.date == s2.date
                         and ((s1.shift_type == "call_day" and s2.shift_type in _surgical_types)
@@ -459,12 +460,14 @@ def check_h6_no_overlap(
                         constraint_id = "H6",
                         constraint_name = "no overlap",
                         severity = "hard",
-                        description = f"Dr. {name}: {s1.shift_type} on {s1.date} ({s1.start_time}-{s1.end_time}) overlaps with {s2.shift_type} on {s2.date} ({s2.start_time}-{s2.end_time}). Note: overnight shifts extend into the next calendar day.",
+                        description = f"Dr. {name} has overlapping shifts: {s1.shift_type} on {s1.date} and {s2.shift_type} on {s2.date}.",
                         affected_doctors = [doc_id],
-                        affected_dates = sorted({s1.date, s2.date}),
-                        suggestion = "Remove one of these assignments. If one is a call_night, the restriction applies until 07:00 the following day."
+                        affected_dates = sorted(list({s1.date, s2.date})),
+                        suggestion = "Remove one of the overlapping assignments."
                     ))
+
     return violations
+
 
 def check_h7_surgical_pairing(
     assignments: List[Assignment],
@@ -528,13 +531,17 @@ def check_h8_post_call_location(
         return violations
 
     for doc in doctors:
-        doc_slots = sorted(
-            [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc.id],
-            key=lambda x: (x[0].date, x[0].start_time)
-        )
+        doc_slot_list = [(slot_map[a.slot_id], a) for a in assignments if a.doctor_id == doc.id]
+        # Sort by date, start_time, then hospital-before-non-hospital for same time
+        # This ensures hospital clearing slots are processed before non-hospital slots
+        # at the same time on the same date, correctly clearing H8 restriction
+        doc_slot_list.sort(key=lambda x: (
+            x[0].date, x[0].start_time,
+            0 if x[0].office_id == hospital_id else 1
+        ))
 
         post_call_restricted = False
-        for slot, _ in doc_slots:
+        for slot, _ in doc_slot_list:
             if post_call_restricted:
                 if slot.shift_type in CLEARING_SHIFT_TYPES:
                     if slot.office_id == hospital_id:
@@ -599,6 +606,19 @@ def check_h10_days_off(
     violations = []
     doc_map = {d.id: d for d in doctors}
 
+    def _times_overlap_strings(s1, e1, s2, e2):
+        """Check if two time-string intervals overlap. Handles overnight (e < s)."""
+        def to_min(t):
+            h, m = t.split(":")
+            return int(h) * 60 + int(m)
+        a1, b1 = to_min(s1), to_min(e1)
+        a2, b2 = to_min(s2), to_min(e2)
+        if b1 <= a1:
+            b1 += 24 * 60
+        if b2 <= a2:
+            b2 += 24 * 60
+        return a1 < b2 and a2 < b1
+
     def _is_blocked_by_entry(entry, slot_type):
         period = entry.get("period", "all_day")
         if period == "all_day":
@@ -615,7 +635,7 @@ def check_h10_days_off(
             et = entry.get("endTime")
             shift_times = SHIFT_TIMES.get(slot_type)
             if st and et and shift_times:
-                return _times_overlap(shift_times[0], shift_times[1], st, et)
+                return _times_overlap_strings(shift_times[0], shift_times[1], st, et)
             return True
         return False
 
@@ -774,14 +794,14 @@ def check_h12_required_sessions(
             if work_days_in_week <= 0:
                 continue
 
-            reduction = int(day_offs * doc.required_sessions_per_week / 5)
+            reduction = round(day_offs * doc.required_sessions_per_week / 5)
             adjusted = max(0, doc.required_sessions_per_week - reduction)
 
             if week_sessions < adjusted:
                 violations.append(ConstraintViolation(
                     constraint_id = "H12",
                     constraint_name = "Required sessions",
-                    severity = "hard",
+                    severity = "soft",
                     description = f"Dr. {doc.name} has {week_sessions} office sessions in week {wn} but required is {adjusted} (base={doc.required_sessions_per_week}, day_offs={day_offs}, reduction={reduction}).",
                     affected_doctors = [doc.id],
                     affected_dates = [],
@@ -799,7 +819,7 @@ def check_h12_required_sessions(
                 violations.append(ConstraintViolation(
                     constraint_id = "H12",
                     constraint_name = "Required sessions (variety)",
-                    severity = "hard",
+                    severity = "soft",
                     description = f"Dr. {doc.name} has {week_sessions} sessions in week {wn} but only uses {len(week_offices)} office(s). Must spread across multiple offices.",
                     affected_doctors = [doc.id],
                     affected_dates = [],
@@ -866,7 +886,7 @@ def check_s1_am_pm_balance(
             if not day_info:
                 continue
             wn = day_info['week_num']
-            if slot.shift_type == "office_am":
+            if slot.shift_type in ("office_am", "surgical_am"):
                 am_by_week[wn] = am_by_week.get(wn, 0) + 1
             else:
                 pm_by_week[wn] = pm_by_week.get(wn, 0) + 1
@@ -889,22 +909,22 @@ def check_s1_am_pm_balance(
                     affected_dates = [],
                     suggestion = "Rebalance AM and PM sessions for this doctor in this week."
                 ))
-            elif pref == "am_heavy" and am < pm:
+            elif pref == "am" and am < pm:
                 violations.append(ConstraintViolation(
                     constraint_id = "S1",
                     constraint_name = "AM/PM balance",
                     severity = "soft",
-                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: am_heavy). AM < PM despite preference.",
+                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: am). AM < PM despite preference.",
                     affected_doctors = [doc.id],
                     affected_dates = [],
                     suggestion = "Assign more AM sessions to this doctor."
                 ))
-            elif pref == "pm_heavy" and pm < am:
+            elif pref == "pm" and pm < am:
                 violations.append(ConstraintViolation(
                     constraint_id = "S1",
                     constraint_name = "AM/PM balance",
                     severity = "soft",
-                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: pm_heavy). PM < AM despite preference.",
+                    description = f"Dr. {doc.name} has AM={am}, PM={pm} in week {wn} (preference: pm). PM < AM despite preference.",
                     affected_doctors = [doc.id],
                     affected_dates = [],
                     suggestion = "Assign more PM sessions to this doctor."
@@ -1191,8 +1211,16 @@ def check_s4_post_call_work_preference(
         for i, (slot, _) in enumerate(doc_assignments):
             if slot.shift_type not in CALL_SHIFT_TYPES:
                 continue
+            # Skip call_weekend_sun — the S4 check for weekend blocks
+            # is handled from the Saturday call_weekend
+            if slot.shift_type == "call_weekend_sun":
+                continue
 
             next_day = str(dt_class.fromisoformat(slot.date) + timedelta(days=1))
+            # For weekend blocks, skip to Monday (no office slots on weekends)
+            if slot.shift_type in ("call_weekend", "call_night"):
+                while dt_class.fromisoformat(next_day).weekday() >= 5:
+                    next_day = str(dt_class.fromisoformat(next_day) + timedelta(days=1))
 
             next_day_assignments = [
                 (s, a) for s, a in doc_assignments[i + 1:]
