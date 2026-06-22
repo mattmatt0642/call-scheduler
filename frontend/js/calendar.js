@@ -427,26 +427,28 @@ function handleBlackoutCellClick(doctorId, dateStr, cellEl, event) {
   popup.appendChild(clearBtn);
  }
 
- const rect = cellEl.getBoundingClientRect();
- const portal = document.getElementById('blackout-portal') || document.body;
- const portalRect = portal === document.body ? { top: 0, left: 0 } : portal.getBoundingClientRect();
- portal.style.position = 'relative';
- popup.style.position = 'absolute';
- const popH = 220;
- const popW = 180;
- let top = rect.bottom - portalRect.top + (portal.scrollTop || 0) + 4;
- let left = Math.max(0, rect.left - portalRect.left - 40);
- const containerH = portal === document.body ? window.innerHeight : portal.clientHeight;
- const containerW = portal === document.body ? window.innerWidth : portal.clientWidth;
- if (top + popH > containerH + (portal === document.body ? window.scrollY : portal.scrollTop)) {
-  top = rect.top - portalRect.top + (portal.scrollTop || 0) - popH - 4;
- }
- if (left + popW > containerW) {
-  left = Math.max(0, containerW - popW - 8);
- }
- popup.style.top = top + 'px';
- popup.style.left = left + 'px';
- portal.appendChild(popup);
+  const rect = cellEl.getBoundingClientRect();
+  const grid = cellEl.closest('.blackout-grid');
+  const portal = grid ? grid.closest('.timeoff-body')?.querySelector('.doc-bo-portal') : null;
+  const portalEl = portal || document.body;
+  const portalRect = portalEl === document.body ? { top: 0, left: 0 } : portalEl.getBoundingClientRect();
+  portalEl.style.position = 'relative';
+  popup.style.position = 'absolute';
+  const popH = 220;
+  const popW = 180;
+  let top = rect.bottom - portalRect.top + (portalEl.scrollTop || 0) + 4;
+  let left = Math.max(0, rect.left - portalRect.left - 40);
+  const containerH = portalEl === document.body ? window.innerHeight : portalEl.clientHeight;
+  const containerW = portalEl === document.body ? window.innerWidth : portalEl.clientWidth;
+  if (top + popH > containerH + (portalEl === document.body ? window.scrollY : portalEl.scrollTop)) {
+    top = rect.top - portalRect.top + (portalEl.scrollTop || 0) - popH - 4;
+  }
+  if (left + popW > containerW) {
+    left = Math.max(0, containerW - popW - 8);
+  }
+  popup.style.top = top + 'px';
+  popup.style.left = left + 'px';
+  portalEl.appendChild(popup);
  _activePopup = popup;
 }
 
@@ -511,15 +513,8 @@ function getMonthKeyFromStr(dateStr) {
 
 function refreshBlackoutCalendar() {
   closePeriodPopup();
-  const { year, month } = getBlackoutYearMonth();
-
-  const cal = document.getElementById('blackout-calendar');
-  const sel = document.getElementById('blackout-doctor-select');
-  const doctorId = sel?.value;
-  if (cal && doctorId) {
-    cal.innerHTML = buildBlackoutGridHTML(year, month, doctorId);
-    const entriesEl = document.getElementById('blackout-entries');
-    if (entriesEl) entriesEl.innerHTML = buildTimeOffEntriesHTML(year, month, doctorId);
+  if (typeof refreshAllDocTimeOffCalendars === 'function') {
+    refreshAllDocTimeOffCalendars();
   }
 }
 

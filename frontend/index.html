@@ -3,11 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="theme-color" content="#0f0f15" />
 <meta name="description" content="Automated on-call and office schedule generator for medical practices" />
-<link rel="manifest" href="manifest.json" />
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" id="theme-favicon" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" />
 <title data-theme-title="Call Scheduler">Call Scheduler</title>
 <link rel="stylesheet" href="css/style.css?v=9" />
 <script src="js/theme.js?v=1"></script>
@@ -145,40 +142,16 @@
 
   <div class="wizard-nav">
     <button class="btn btn-ghost" onclick="wizardPrev()">&larr; Back</button>
-    <button class="btn btn-primary" onclick="wizardNext()">Next: Availability &rarr;</button>
+    <button class="btn btn-primary" onclick="wizardNext()">Next: Generate &rarr;</button>
   </div>
 </div>
 
-<!-- Step 4: Restrictions & Generate -->
+<!-- Step 4: Generate -->
 <div id="wstep-4" class="wizard-step hidden">
-<h2 class="step-heading">Availability &amp; Generate</h2>
-<p class="step-subheading">Mark time off for each doctor, then generate the schedule.</p>
+<h2 class="step-heading">Generate Schedule</h2>
+<p class="step-subheading">Review your setup and generate. Manage time off on each doctor's card in the Doctors tab.</p>
 
 <div class="gen-layout">
-<div class="gen-left">
-<!-- Time off calendar -->
-<div class="gen-card">
-<h3 class="gen-card-header">Time Off</h3>
-<div class="gen-card-body">
-<div class="field" style="margin-bottom:0.6rem;">
-<label>Doctor</label>
-<select id="blackout-doctor-select"></select>
-</div>
-<div id="blackout-calendar" class="blackout-calendar-container"></div>
-<div id="blackout-portal"></div>
-<div class="blackout-legend">
-<span><span class="legend-dot legend-dot-all"></span> All Day</span>
-<span><span class="legend-dot legend-dot-am"></span> Morning</span>
-<span><span class="legend-dot legend-dot-pm"></span> Afternoon</span>
-<span><span class="legend-dot legend-dot-custom"></span> Custom</span>
-</div>
-<div id="blackout-entries"></div>
-</div>
-</div>
-</div>
-
-<div class="gen-right">
-<!-- Generate -->
 <div class="gen-card">
 <h3 class="gen-card-header">Generate Schedule</h3>
 <div class="gen-card-body">
@@ -193,12 +166,10 @@
 </div>
 </div>
 
-<!-- Summary -->
 <div class="gen-card">
 <h3 class="gen-card-header">Summary</h3>
 <div class="gen-card-body" id="wiz-summary">
 <div class="text-muted text-sm">Add doctors and offices to see a summary.</div>
-</div>
 </div>
 </div>
 </div>
@@ -287,7 +258,6 @@
   <div class="sched-header">
     <div>
       <h2 class="sched-title" id="sched-month-label">September 2026</h2>
-<span id="stale-data-indicator"></span>
     </div>
     <div class="flex-row">
       <div class="month-nav">
@@ -355,9 +325,6 @@
 <label class="btn btn-sm btn-ghost file-btn">&uarr; Import
 <input type="file" id="import-balance-file" accept=".csv" hidden />
 </label>
-<button class="btn btn-sm btn-ghost" id="btn-backup-state" title="Download full backup of all data">&#9670; Backup</button>
-<label class="btn btn-sm btn-ghost file-btn" title="Restore from a backup file">&#9671; Restore<input type="file" id="import-backup-file" accept=".json" hidden /></label>
-<button class="btn btn-sm btn-ghost" id="btn-view-snapshots">&#9670;&#9670; Snapshots</button>
 </div>
 </div>
 <div id="balance-table-wrapper"></div>
@@ -380,9 +347,6 @@
 <script defer src="js/doctor_config.js?v=7"></script>
 <script defer src="js/auth.js?v=6"></script>
 <script defer src="js/app.js?v=8"></script>
-<script defer src="js/install-prompt.js?v=1"></script>
-<script defer src="js/logger.js?v=1"></script>
-<script defer src="js/performance.js?v=1"></script>
 <div class="toast-container" id="toast-container"></div>
 </body>
 </html>

@@ -11,7 +11,11 @@ function renderDoctorAccordion() {
   const prevScrollTop = mainEl ? mainEl.scrollTop : 0;
   const prevScrollLeft = mainEl ? mainEl.scrollLeft : 0;
 
-  const openIds = Array.from(container.querySelectorAll('.advanced-body.open'))
+  const openAdvIds = Array.from(container.querySelectorAll('.advanced-body.open'))
+    .map(el => el.id)
+    .filter(id => id);
+
+  const openTimeOffIds = Array.from(container.querySelectorAll('.timeoff-body.open'))
     .map(el => el.id)
     .filter(id => id);
 
@@ -23,7 +27,7 @@ function renderDoctorAccordion() {
 
   container.innerHTML = STATE.doctors.map(doc => buildDocCard(doc)).join('');
 
-  openIds.forEach(id => {
+  openAdvIds.forEach(id => {
     const body = document.getElementById(id);
     if (body) {
       body.classList.add('open');
@@ -32,6 +36,19 @@ function renderDoctorAccordion() {
         const arrow = btn.querySelector('.advanced-arrow');
         if (arrow) arrow.innerHTML = '&#9660;';
       }
+    }
+  });
+
+  openTimeOffIds.forEach(id => {
+    const body = document.getElementById(id);
+    if (body) {
+      body.classList.add('open');
+      const btn = body.previousElementSibling;
+      if (btn) {
+        const arrow = btn.querySelector('.toggle-arrow');
+        if (arrow) arrow.innerHTML = '&#9660;';
+      }
+      renderDocTimeOffCalendar(body);
     }
   });
 
@@ -84,6 +101,9 @@ function buildDocCard(doc) {
       <label class="toggle-label"><span class="toggle-text">No Wknd Call</span>
       <div class="toggle-switch"><input type="checkbox" ${doc.weekendCallOff ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendCallOff', this.checked)"/><span class="toggle-slider"></span></div>
       </label>
+      <label class="toggle-label"><span class="toggle-text">Pair Weekends</span>
+      <div class="toggle-switch"><input type="checkbox" ${doc.weekendPairingPreference ? 'checked' : ''} onchange="updateDocField('${doc.id}', 'weekendPairingPreference', this.checked)"/><span class="toggle-slider"></span></div>
+      </label>
       </div>
     </div>
 
@@ -112,6 +132,14 @@ function buildDocCard(doc) {
     <div class="doc-card-section">
       <h4 class="doc-card-label">Allowed Offices</h4>
       <div class="day-chips-row">${allowedChecks}</div>
+    </div>
+
+    <div class="doc-card-section timeoff-section">
+      <button class="timeoff-toggle" onclick="toggleTimeOff('toff-${doc.id}', this)">
+        <h4 class="doc-card-label" style="margin:0">Time Off <span class="toggle-arrow">&#9654;</span></h4>
+      </button>
+      <div id="toff-${doc.id}" class="timeoff-body" data-doctor-id="${doc.id}">
+      </div>
     </div>
 
     <div class="doc-card-advanced">
@@ -296,7 +324,6 @@ function updateDocField(docId, field, value) {
   if (field === 'name') {
     const input = document.querySelector(`.doc-item[data-doc-id="${docId}"] .doc-name-input`);
     if (input) input.value = value;
-    renderSetup();
   }
 }
 
@@ -436,4 +463,40 @@ function officePrefDrop(e, docId, targetOfficeId) {
   reopenDocItem(docId);
   _dragDocId = null;
   _dragOfficeId = null;
+}
+
+function toggleTimeOff(id, btn) {
+  const body = document.getElementById(id);
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  const arrow = btn.querySelector('.toggle-arrow');
+  if (arrow) arrow.innerHTML = open ? '&#9660;' : '&#9654;';
+  if (open) renderDocTimeOffCalendar(body);
+}
+
+function renderDocTimeOffCalendar(bodyEl) {
+  if (!bodyEl) return;
+  const doctorId = bodyEl.dataset.doctorId;
+  if (!doctorId) return;
+  const { year, month } = getBlackoutYearMonth();
+  bodyEl.innerHTML = `
+    <div id="doc-bo-cal-${doctorId}" class="blackout-calendar-container"></div>
+    <div id="doc-bo-portal-${doctorId}" class="doc-bo-portal" style="position:relative"></div>
+    <div class="blackout-legend">
+      <span><span class="legend-dot legend-dot-all"></span> All Day</span>
+      <span><span class="legend-dot legend-dot-am"></span> Morning</span>
+      <span><span class="legend-dot legend-dot-pm"></span> Afternoon</span>
+      <span><span class="legend-dot legend-dot-custom"></span> Custom</span>
+    </div>
+    <div id="doc-bo-entries-${doctorId}"></div>`;
+  const calEl = document.getElementById('doc-bo-cal-' + doctorId);
+  const entriesEl = document.getElementById('doc-bo-entries-' + doctorId);
+  if (calEl) calEl.innerHTML = buildBlackoutGridHTML(year, month, doctorId);
+  if (entriesEl) entriesEl.innerHTML = buildTimeOffEntriesHTML(year, month, doctorId);
+}
+
+function refreshAllDocTimeOffCalendars() {
+  document.querySelectorAll('.timeoff-body.open').forEach(body => {
+    renderDocTimeOffCalendar(body);
+  });
 }
