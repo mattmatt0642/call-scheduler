@@ -853,36 +853,6 @@ def schedule_greedy(inp: ScheduleInput) -> ScheduleResult:
                 if s.start_time <= start_time:
                     return True
         return False
-        
-        # Check if there's a hospital office assignment after the most recent call
-        # and on or before date_str
-        for a in assignments:
-            if a.doctor_id != doc_id:
-                continue
-            s = slot_map.get(a.slot_id)
-            if not s or s.date > date_str:
-                continue
-            if (s.office_id == hospital_id
-                and s.date >= most_recent_call.date
-                and s.shift_type in ('office_am', 'office_pm', 'office_late',
-                                     'surgical_am', 'surgical_hosp_pm')):
-                return False
-        
-        return True
-
-    def _has_hospital_before_slot(doc_id, date_str, start_time):
-        """Check if doctor has a hospital assignment on the same date
-        that starts at or before the given start_time."""
-        for a in assignments:
-            if a.doctor_id != doc_id:
-                continue
-            s = slot_map.get(a.slot_id)
-            if not s:
-                continue
-            if s.date == date_str and s.office_id == hospital_id:
-                if s.start_time <= start_time:
-                    return True
-        return False
 
     for day in days:
             if day['is_weekend'] or day['date'] in global_day_off_set:
