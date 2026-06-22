@@ -154,7 +154,7 @@ def make_generate_payload(year=2026, month=8, doctors=None, offices=None,
 
 
 def _api_generate(client, payload):
-    return client.post("/generate", json=payload)
+    return client.post("/api/generate", json=payload)
 
 
 client = app.test_client()
@@ -170,7 +170,7 @@ _std_inp = make_input(doctors=_std_docs, offices=_std_offices,
 _std_result = schedule_ilp(_std_inp)
 _std_slot_map = {s.slot_id: s for s in _std_result.slots}
 _std_payload = make_generate_payload()
-_std_api_result = client.post("/generate", json=_std_payload)
+_std_api_result = client.post("/api/generate", json=_std_payload)
 _std_api_data = _std_api_result.get_json()
 print(f"  Pre-gen done: status={_std_api_result.status_code}, "
       f"assigns={len(_std_result.assignments)}, "
@@ -183,10 +183,10 @@ print(f"  Pre-gen done: status={_std_api_result.status_code}, "
 print("\n=== SECTION A: FLASK API ENDPOINTS ===")
 
 # --- A1: GET /health ---
-r = client.get("/health")
+r = client.get("/api/health")
 check("A1.1 health returns ok",
       r.status_code == 200 and r.get_json() == {"status": "ok"})
-r_post = client.post("/health")
+r_post = client.post("/api/health")
 check("A1.2 health rejects POST", r_post.status_code == 405)
 
 # --- A2: POST /generate ---
@@ -435,14 +435,14 @@ payload_validate = {
         for a in data_gen.get("assignments", [])
     ],
 }
-r_val = client.post("/validate", json=payload_validate)
+r_val = client.post("/api/validate", json=payload_validate)
 v_data = r_val.get_json()
 check("A3.1 valid schedule no violations",
       r_val.status_code == 200 and len(v_data.get("violations", [])) == 0,
       f"got {len(v_data.get('violations', []))} violations")
 
 # A3.2: Empty assignments -> H3 violations
-r_val_empty = client.post("/validate", json={
+r_val_empty = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(),
     "offices": make_office_json(),
@@ -456,7 +456,7 @@ check("A3.2 empty assignments -> H3 violations", len(h3_violations) > 0,
       f"got {len(h3_violations)}")
 
 # A3.3: H1 violation - two doctors in same call slot
-r_val_h1 = client.post("/validate", json={
+r_val_h1 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(2),
     "offices": make_office_json(),
@@ -472,7 +472,7 @@ check("A3.3 H1 violation detected", len(h1_v) > 0)
 
 # A3.4: H8 violation - non-hospital after call
 # Use slots that exist in our slot set
-r_val_h8 = client.post("/validate", json={
+r_val_h8 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(2),
     "offices": make_office_json(),
@@ -489,7 +489,7 @@ check("A3.4 H8 violation detected", len(h8_v) > 0)
 # A3.5: H9 violation - doctor at non-allowed office
 docs_h9 = make_doctor_json(2)
 docs_h9[0]["allowedOffices"] = ["north"]
-r_val_h9 = client.post("/validate", json={
+r_val_h9 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": docs_h9,
     "offices": make_office_json(),
@@ -505,7 +505,7 @@ check("A3.5 H9 violation detected", len(h9_v) > 0)
 # A3.6: H10 violation - standing days-off (use standingDaysOff so slots still exist)
 docs_h10_test = make_doctor_json(2)
 docs_h10_test[0]["standingDaysOff"] = [1]  # Tuesday
-r_val_h10 = client.post("/validate", json={
+r_val_h10 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": docs_h10_test,
     "offices": make_office_json(),
@@ -522,7 +522,7 @@ check("A3.6 H10 standing days-off violation detected", len(h10_v) > 0)
 # Sep 1 2026 is Tuesday (weekday=1)
 docs_h10s = make_doctor_json(2)
 docs_h10s[0]["standingDaysOff"] = [1]  # Tuesday
-r_val_h10s = client.post("/validate", json={
+r_val_h10s = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": docs_h10s,
     "offices": make_office_json(),
@@ -536,7 +536,7 @@ h10s_v = [v for v in r_val_h10s.get_json().get("violations", [])
 check("A3.7 H10 standing days-off detected", len(h10s_v) > 0)
 
 # A3.8: H6 overlap violation - call_day overlaps office_am same date
-r_val_h6 = client.post("/validate", json={
+r_val_h6 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(2),
     "offices": make_office_json(),
@@ -551,7 +551,7 @@ h6_v = [v for v in r_val_h6.get_json().get("violations", [])
 check("A3.8 H6 overlap violation detected", len(h6_v) > 0)
 
 # A3.9: H7 unpaired surgical - Sep 1 is Tuesday
-r_val_h7 = client.post("/validate", json={
+r_val_h7 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(2),
     "offices": make_office_json(),
@@ -596,7 +596,7 @@ payload_bal = {
                "office_visits": {"north": 12, "south": 4}},
     },
 }
-r_eb = client.post("/export-balance", json=payload_bal)
+r_eb = client.post("/api/export-balance", json=payload_bal)
 check("A4.1 export-balance 200", r_eb.status_code == 200)
 check("A4.1 content-type csv", "text/csv" in r_eb.content_type)
 check("A4.1 content-disposition has balance.csv",
@@ -610,7 +610,7 @@ check("A4.3 CSV has 1+3 rows", len(csv_lines) == 4,
       f"got {len(csv_lines)}")
 
 # A4.4: Missing doctors -> error
-r_eb_bad = client.post("/export-balance", json={})
+r_eb_bad = client.post("/api/export-balance", json={})
 check("A4.4 missing doctors -> 500", r_eb_bad.status_code == 500,
       f"got {r_eb_bad.status_code}")
 
@@ -620,7 +620,7 @@ print("  A5: /import-balance tests...")
 
 # A5.1: Basic import
 buf = io.BytesIO(csv_text.encode())
-r_ib = client.post("/import-balance", data={"file": (buf, "balance.csv")})
+r_ib = client.post("/api/import-balance", data={"file": (buf, "balance.csv")})
 check("A5.1 import-balance 200", r_ib.status_code == 200)
 ib_data = r_ib.get_json()
 check("A5.1 parsed has 3 doctors", len(ib_data) == 3,
@@ -641,7 +641,7 @@ csv_empty_vals = (
     '"Doc","d0","","","","0","","","","","5",""\n'
 )
 buf_empty = io.BytesIO(csv_empty_vals.encode())
-r_ib_empty = client.post("/import-balance", data={"file": (buf_empty, "bal.csv")})
+r_ib_empty = client.post("/api/import-balance", data={"file": (buf_empty, "bal.csv")})
 d_empty = r_ib_empty.get_json()
 check("A5.3 empty -> 0",
       d_empty.get("d0", {}).get("weekday_day") == 0,
@@ -650,14 +650,14 @@ check("A5.3 zero preserved",
       d_empty.get("d0", {}).get("friday_night") == 0)
 
 # A5.4: No file -> 400
-r_ib_nofile = client.post("/import-balance", data={})
+r_ib_nofile = client.post("/api/import-balance", data={})
 check("A5.4 no file -> 400", r_ib_nofile.status_code == 400,
       f"got {r_ib_nofile.status_code}")
 
 # A5.5: Malformed CSV -> graceful
 bad_csv = '"doctor_name","doctor_id","weekday_day"\n"Doc","d0","abc"\n'
 buf_bad = io.BytesIO(bad_csv.encode())
-r_ib_bad = client.post("/import-balance", data={"file": (buf_bad, "bad.csv")})
+r_ib_bad = client.post("/api/import-balance", data={"file": (buf_bad, "bad.csv")})
 check("A5.5 malformed CSV handled",
       r_ib_bad.status_code in (200, 500),
       f"got {r_ib_bad.status_code}")
@@ -673,7 +673,7 @@ payload_es = {
     "assignments": data_gen.get("assignments", []),
     "dayOffDates": [], "customRestrictions": [],
 }
-r_es = client.post("/export-schedule", json=payload_es)
+r_es = client.post("/api/export-schedule", json=payload_es)
 check("A6.1 export-schedule 200", r_es.status_code == 200)
 check("A6.1 content-type csv", "text/csv" in r_es.content_type)
 check("A6.1 content-disposition has schedule.csv",
@@ -1391,7 +1391,7 @@ check("D5 isLocked round-trip", locked_d5_found)
 print("\n=== SECTION E: ERROR HANDLING ===")
 
 # E1: Invalid JSON
-r_e1 = client.post("/generate", data="not json",
+r_e1 = client.post("/api/generate", data="not json",
                    content_type="application/json")
 check("E1 invalid JSON -> error",
       r_e1.status_code in (400, 500),

@@ -177,7 +177,7 @@ check("A1 single doc has call assignments",
           for a in result_a.assignments))
 
 # A2: Single doc via API
-r_a2 = client.post("/generate", json=make_generate_payload(
+r_a2 = client.post("/api/generate", json=make_generate_payload(
     doctors=[make_doctor_json(1, maxWeekdayDayCalls=30,
                               maxWeekdayNightCalls=30,
                               maxFridayNightCalls=10,
@@ -273,7 +273,7 @@ check("C2 max_override=10 on office_am",
       f"got {north_c2[0].max_doctors if north_c2 else 'N/A'}")
 
 # C3: Custom restriction via API
-r_c3 = client.post("/generate", json=make_generate_payload(
+r_c3 = client.post("/api/generate", json=make_generate_payload(
     customRestrictions=[
         {"date": "2026-09-01", "officeId": "hosp",
          "shiftType": "call_day", "maxOverride": 0}
@@ -425,7 +425,7 @@ check("E5 get_weekend_blocks doesn't crash for October",
       len(blocks_e5) >= 0)
 
 # E6: API December
-r_e6 = client.post("/generate", json=make_generate_payload(year=2026, month=11))
+r_e6 = client.post("/api/generate", json=make_generate_payload(year=2026, month=11))
 check("E6 API December generates",
       r_e6.status_code == 200, f"got {r_e6.status_code}")
 d_e6 = r_e6.get_json()
@@ -510,7 +510,7 @@ else:
     check("G1 locked assignment preserved", True, "no hosp office_am slot")
 
 # G2: Locked assignment via API
-r_g2 = client.post("/generate", json=make_generate_payload(
+r_g2 = client.post("/api/generate", json=make_generate_payload(
     lockedAssignments=[
         {"doctorId": "d0", "slotId": "2026-09-01_hosp_call_day",
          "isLocked": True}
@@ -580,7 +580,7 @@ check("H2 override on non-existent office ignored",
       len(overrides_h2) == 0, f"got {len(overrides_h2)}")
 
 # H3: Override via API
-r_h3 = client.post("/generate", json=make_generate_payload(
+r_h3 = client.post("/api/generate", json=make_generate_payload(
     doctors=[{
         "id": "d0", "name": "OverrideDoc",
         "allowedOffices": None, "officePreferences": [],
@@ -835,12 +835,12 @@ check("L6 weekend block -> Mon non-hospital = H8",
 print("\n=== SECTION M: API ROBUSTNESS ===")
 
 # M1: Generate with extra fields
-r_m1 = client.post("/generate", json=make_generate_payload(foo="bar"))
+r_m1 = client.post("/api/generate", json=make_generate_payload(foo="bar"))
 check("M1 extra fields ignored",
       r_m1.status_code == 200, f"got {r_m1.status_code}")
 
 # M2: Validate with no assignments
-r_m2 = client.post("/validate", json={
+r_m2 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(),
     "offices": make_office_json(),
@@ -856,7 +856,7 @@ check("M2 empty assignments has H3 violations",
       len(h3_m2) > 0)
 
 # M3: Export balance with single doctor
-r_m3 = client.post("/export-balance", json={
+r_m3 = client.post("/api/export-balance", json={
     "doctors": make_doctor_json(1),
     "offices": make_office_json(),
     "totals": {
@@ -874,7 +874,7 @@ check("M3 CSV has header + 1 row",
       len(csv_m3.strip().split("\n")) == 2)
 
 # M4: Export schedule with no assignments
-r_m4 = client.post("/export-schedule", json={
+r_m4 = client.post("/api/export-schedule", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(),
     "offices": make_office_json(),
@@ -887,7 +887,7 @@ check("M4 export-schedule no assignments",
 # M5: Import balance then use as historical
 csv_m5 = r_m3.data.decode()
 buf_m5 = __import__("io").BytesIO(csv_m5.encode())
-r_ib_m5 = client.post("/import-balance", data={"file": (buf_m5, "bal.csv")})
+r_ib_m5 = client.post("/api/import-balance", data={"file": (buf_m5, "bal.csv")})
 check("M5 import then reuse",
       r_ib_m5.status_code == 200)
 ib_m5 = r_ib_m5.get_json()
@@ -944,7 +944,7 @@ check("N2 Sat+Sun paired same doctor", all_paired_n2)
 print("\n=== SECTION O: CONSTRAINT CHECKER WITH UNKNOWN SLOTS ===")
 
 # O1: Validate with assignment to non-existent slot
-r_o1 = client.post("/validate", json={
+r_o1 = client.post("/api/validate", json={
     "year": 2026, "month": 8,
     "doctors": make_doctor_json(2),
     "offices": make_office_json(),
