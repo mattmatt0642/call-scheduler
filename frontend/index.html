@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0f0f15" />
 <meta name="description" content="Automated on-call and office schedule generator for medical practices" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>" id="theme-favicon" />
 <title data-theme-title="Call Scheduler">Call Scheduler</title>
 <link rel="stylesheet" href="css/style.css?v=9" />
@@ -285,6 +287,7 @@
   <div class="sched-header">
     <div>
       <h2 class="sched-title" id="sched-month-label">September 2026</h2>
+<span id="stale-data-indicator"></span>
     </div>
     <div class="flex-row">
       <div class="month-nav">
@@ -352,6 +355,9 @@
 <label class="btn btn-sm btn-ghost file-btn">&uarr; Import
 <input type="file" id="import-balance-file" accept=".csv" hidden />
 </label>
+<button class="btn btn-sm btn-ghost" id="btn-backup-state" title="Download full backup of all data">&#9670; Backup</button>
+<label class="btn btn-sm btn-ghost file-btn" title="Restore from a backup file">&#9671; Restore<input type="file" id="import-backup-file" accept=".json" hidden /></label>
+<button class="btn btn-sm btn-ghost" id="btn-view-snapshots">&#9670;&#9670; Snapshots</button>
 </div>
 </div>
 <div id="balance-table-wrapper"></div>
@@ -368,12 +374,15 @@
 
 </div>
 
-<script defer src="js/storage.js?v=5"></script>
-<script defer src="js/api.js?v=5"></script>
-<script defer src="js/calendar.js?v=6"></script>
-<script defer src="js/doctor_config.js?v=6"></script>
-<script defer src="js/auth.js?v=5"></script>
-<script defer src="js/app.js?v=6"></script>
+<script defer src="js/storage.js?v=6"></script>
+<script defer src="js/api.js?v=6"></script>
+<script defer src="js/calendar.js?v=7"></script>
+<script defer src="js/doctor_config.js?v=7"></script>
+<script defer src="js/auth.js?v=6"></script>
+<script defer src="js/app.js?v=8"></script>
+<script defer src="js/install-prompt.js?v=1"></script>
+<script defer src="js/logger.js?v=1"></script>
+<script defer src="js/performance.js?v=1"></script>
 <div class="toast-container" id="toast-container"></div>
 </body>
 </html>

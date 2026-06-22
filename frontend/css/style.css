@@ -1723,6 +1723,85 @@ cursor: pointer;
 .api-dot.online { background: var(--accent-green); box-shadow: 0 0 4px var(--accent-green); }
 .api-dot.offline { background: var(--accent-red); }
 
+/* ---- Connection Banner / Install Prompt ── */
+.conn-banner {
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.8rem;
+  font-family: var(--font-ui);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  opacity: 0;
+  transform: translateY(-100%);
+  transition: opacity 250ms ease, transform 250ms ease;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+.conn-banner.visible {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
+.conn-banner-offline {
+  background: rgba(248, 113, 113, 0.1);
+  border-bottom-color: rgba(248, 113, 113, 0.3);
+  color: var(--text-primary);
+}
+.conn-banner-online {
+  background: rgba(52, 211, 153, 0.1);
+  border-bottom-color: rgba(52, 211, 153, 0.3);
+  color: var(--text-primary);
+}
+.conn-banner-info {
+  background: rgba(79, 143, 247, 0.1);
+  border-bottom-color: rgba(79, 143, 247, 0.3);
+  color: var(--text-primary);
+}
+.conn-banner-warn {
+  background: rgba(251, 191, 36, 0.1);
+  border-bottom-color: rgba(251, 191, 36, 0.3);
+  color: var(--text-primary);
+}
+.conn-banner-icon { font-size: 1rem; }
+.conn-banner-msg { flex: 1; }
+.conn-banner-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  line-height: 1;
+}
+.conn-banner-dismiss:hover { color: var(--text-primary); }
+
+/* ---- Stale Data Indicator ── */
+.stale-data-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  background: var(--accent-orange-light);
+  color: var(--accent-orange);
+  font-weight: 600;
+}
+
+/* ---- Snapshot Modal ── */
+.snapshot-info {
+  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+.sheet-table th { position: sticky; top: 0; background: var(--bg-tertiary); z-index: 1; }
+.gini-warn { color: var(--accent-orange); }
+.gini-ok { color: var(--accent-green); }
+
 /* ---- Helpers ---- */
 .hidden { display: none !important; }
 .flex-row { display: flex; align-items: center; gap: 0.4rem; }
